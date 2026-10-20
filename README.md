@@ -143,6 +143,7 @@ CREATOR_SLUG_HOLD_DAYS - Days a slug released by renaming (or by a claim that le
 MAX_WEBHOOKS_PER_CREATOR - Most webhooks one creator may register (default: 5, 0 removes the cap)
 WEBHOOK_DELIVERY_RETENTION_DAYS - Prune successful deliveries older than this (default: 30, 0 disables)
 WEBHOOK_DELIVERY_FAILURE_RETENTION_DAYS - Prune failed deliveries older than this (default: 90, 0 disables)
+NOTIFICATION_RETENTION_DAYS - Days notification rows are kept (default: 90, 0 keeps them forever)
 WEBHOOK_DELIVERY_PRUNE_BATCH_SIZE - Rows deleted per statement (default: 500)
 WEBHOOK_DELIVERY_PRUNE_INTERVAL_MINUTES - How often the pruner runs (default: 60)
 RESEND_API_KEY - Resend API key (default: "", which disables email)
@@ -821,6 +822,19 @@ next one. A failed pass is logged and retried on the next tick.
 The prune predicate (`success = ? AND "attemptedAt" < ?`) is served by the
 WebhookDelivery_success_attemptedAt_idx index added in
 prisma/migrations/20260908000000_webhook_delivery_retention_index.
+
+## Notification Retention
+
+Notification rows are pruned by the existing background retention scheduler
+after `NOTIFICATION_RETENTION_DAYS` (default 90 days). Set it to `0` to keep
+notifications indefinitely. Deletes use the configured
+`WEBHOOK_DELIVERY_PRUNE_BATCH_SIZE` in batches, with a ceiling of 50 batches per
+run for notifications so a large backlog cannot block webhook delivery
+retention.
+
+Rows whose `createdAt` is strictly older than the cutoff are eligible for
+deletion; rows at or newer than the cutoff remain available to
+`GET /notifications`.
 
 ### Manual verification
 

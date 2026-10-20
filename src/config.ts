@@ -228,6 +228,11 @@ export const config = {
     },
   },
 
+  notifications: {
+    /** Stored notifications are pruned after this many days; 0 keeps them. */
+    retentionDays: optionalInt("NOTIFICATION_RETENTION_DAYS", 90, 0),
+  },
+
   resend: {
     apiKey: optional("RESEND_API_KEY", ""),
     from: optional("EMAIL_FROM", "tips@novatip.xyz"),

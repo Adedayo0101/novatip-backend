@@ -5,6 +5,7 @@ const envKeys = [
   "JWT_SECRET",
   "TIP_SPLITTER_CONTRACT_ID",
   "INDEXER_START_LEDGER",
+  "NOTIFICATION_RETENTION_DAYS",
 ] as const;
 const originalEnv = Object.fromEntries(
   envKeys.map((key) => [key, process.env[key]]),
@@ -25,6 +26,7 @@ beforeEach(() => {
   process.env["JWT_SECRET"] = "test-secret-not-used-for-signing";
   process.env["TIP_SPLITTER_CONTRACT_ID"] = `C${"A".repeat(55)}`;
   delete process.env["INDEXER_START_LEDGER"];
+  delete process.env["NOTIFICATION_RETENTION_DAYS"];
 });
 
 afterEach(() => {
@@ -64,5 +66,19 @@ describe("config", () => {
     await expect(loadConfig()).rejects.toThrow(
       "Env var INDEXER_START_LEDGER must be an integer",
     );
+  });
+
+  it("defaults notification retention to 90 days", async () => {
+    await expect(loadConfig()).resolves.toMatchObject({
+      notifications: { retentionDays: 90 },
+    });
+  });
+
+  it("allows notification retention to be disabled with zero", async () => {
+    process.env["NOTIFICATION_RETENTION_DAYS"] = "0";
+
+    await expect(loadConfig()).resolves.toMatchObject({
+      notifications: { retentionDays: 0 },
+    });
   });
 });
