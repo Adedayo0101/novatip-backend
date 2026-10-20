@@ -287,4 +287,22 @@ export const config = {
    * appBaseUrl so an unconfigured deployment keeps today's behaviour.
    */
   corsAllowedOrigins: optionalList("CORS_ALLOWED_ORIGINS", [appBaseUrl]),
+
+  metrics: {
+    /**
+     * Whether the /metrics endpoint is enabled. Disabled by default.
+     * Set METRICS_ENABLED=true to enable.
+     */
+    enabled: optionalBoolean("METRICS_ENABLED", false),
+
+    /**
+     * Bearer token for /metrics authentication. If empty, the metrics
+     * endpoint should bind to an internal address only. If set, requests
+     * must include "Authorization: Bearer <token>".
+     */
+    token: optional("METRICS_TOKEN", ""),
+  },
+
+  metricsEnabled: optionalBoolean("METRICS_ENABLED", false),
+  metricsToken: optional("METRICS_TOKEN", ""),
 } as const;

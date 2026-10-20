@@ -37,6 +37,12 @@ import { logger } from "../utils/logger.js";
 import { persistTip, updateCursor, readCursor } from "./persist.js";
 import { dispatchWebhooks } from "../modules/webhooks/webhooks.service.js";
 import { sendTipNotification } from "../modules/notifications/email.service.js";
+import {
+  recordTipIndexed,
+  updateIndexerCursor,
+  updateIndexerLag,
+  recordSuccessfulPoll,
+} from "../modules/metrics/metrics.service.js";
 
 /**
  * How often (in ms) the indexer loop polls the Soroban RPC for new TipReceived events.
@@ -157,6 +163,11 @@ async function runLoop(options?: IndexerOptions): Promise<void> {
             config.stellar.rpcUrl,
             config.stellar.rpcTimeoutMs,
           );
+          // Update metrics with current lag
+          if (observedHead !== null) {
+            const lag = observedHead - startLedger;
+            updateIndexerLag(lag >= 0 ? lag : 0);
+          }
         } catch (err) {
           // Cursor freshness is an optimisation — never let it stop indexing.
           indexerLogger.warn({ err }, "could not read chain head");
@@ -199,6 +210,7 @@ async function runLoop(options?: IndexerOptions): Promise<void> {
         if (cursorLedger !== null) {
           await updateCursor(cursorLedger);
           persistedCursor = cursorLedger;
+          updateIndexerCursor(cursorLedger);
         }
       } else {
         // No tips in this range — advance to chain head so an idle stretch
@@ -218,11 +230,13 @@ async function runLoop(options?: IndexerOptions): Promise<void> {
           await updateCursor(advance.cursorLedger);
           startLedger = advance.nextStartLedger;
           persistedCursor = advance.cursorLedger;
+          updateIndexerCursor(advance.cursorLedger);
         }
       }
 
       // Successful poll resets consecutive failure count
       consecutiveFailures = 0;
+      recordSuccessfulPoll();
     } catch (err) {
       consecutiveFailures++;
       const backoffMs = calculatePollBackoff(consecutiveFailures);
@@ -274,6 +288,7 @@ async function handleEvent(event: TipEvent): Promise<void> {
 
   try {
     await persistTip(event, txHash);
+    recordTipIndexed();
     await dispatchWebhooks(event);
     await sendTipNotification(event);
   } catch (err) {
