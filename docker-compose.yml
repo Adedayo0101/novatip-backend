@@ -56,7 +56,7 @@ services:
       HOST:                      0.0.0.0
       DATABASE_URL:              postgresql://novatip:novatip@postgres:5432/novatip
       REDIS_URL:                 redis://redis:6379
-      JWT_SECRET:                local-dev-secret-change-me
+      JWT_SECRET:                local-dev-secret-change-me-at-least-32-chars
       STELLAR_NETWORK:           testnet
       SOROBAN_RPC_URL:           https://soroban-testnet.stellar.org
       HORIZON_URL:               https://horizon-testnet.stellar.org
