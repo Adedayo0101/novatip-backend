@@ -2,8 +2,8 @@
  * scripts/check-env-docs.ts
  *
  * Fails if any env var src/config.ts reads has no line in README.md's
- * Environment Variables section, or if a required one isn't marked
- * "(required)" there.
+ * Environment Variables section, if a required one isn't marked "(required)"
+ * there, or if docker-compose.yml's JWT secret is shorter than config.ts allows.
  *
  * config.ts reads more variables than the README used to list — the four
  * webhook retention settings, HORIZON_URL, NETWORK_PASSPHRASE,

@@ -6,6 +6,7 @@ const envKeys = [
   "TIP_SPLITTER_CONTRACT_ID",
   "INDEXER_START_LEDGER",
   "NOTIFICATION_RETENTION_DAYS",
+  "EMAIL_MAX_PER_CREATOR_PER_HOUR",
 ] as const;
 const originalEnv = Object.fromEntries(
   envKeys.map((key) => [key, process.env[key]]),
@@ -27,6 +28,7 @@ beforeEach(() => {
   process.env["TIP_SPLITTER_CONTRACT_ID"] = `C${"A".repeat(55)}`;
   delete process.env["INDEXER_START_LEDGER"];
   delete process.env["NOTIFICATION_RETENTION_DAYS"];
+  delete process.env["EMAIL_MAX_PER_CREATOR_PER_HOUR"];
 });
 
 afterEach(() => {
@@ -79,6 +81,20 @@ describe("config", () => {
 
     await expect(loadConfig()).resolves.toMatchObject({
       notifications: { retentionDays: 0 },
+    });
+  });
+
+  it("defaults individual tip email cap to ten per creator per hour", async () => {
+    await expect(loadConfig()).resolves.toMatchObject({
+      notifications: { emailMaxPerCreatorPerHour: 10 },
+    });
+  });
+
+  it("allows the email cap to be zero to send digests only", async () => {
+    process.env["EMAIL_MAX_PER_CREATOR_PER_HOUR"] = "0";
+
+    await expect(loadConfig()).resolves.toMatchObject({
+      notifications: { emailMaxPerCreatorPerHour: 0 },
     });
   });
 });

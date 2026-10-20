@@ -231,6 +231,15 @@ export const config = {
   notifications: {
     /** Stored notifications are pruned after this many days; 0 keeps them. */
     retentionDays: optionalInt("NOTIFICATION_RETENTION_DAYS", 90, 0),
+    /**
+     * Individual tip emails allowed per creator per UTC clock hour; 0 sends
+     * digests only.
+     */
+    emailMaxPerCreatorPerHour: optionalInt(
+      "EMAIL_MAX_PER_CREATOR_PER_HOUR",
+      10,
+      0,
+    ),
   },
 
   resend: {
