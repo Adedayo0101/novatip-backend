@@ -41,6 +41,42 @@ npm test
 npm run build
 ```
 
+### Integration tests
+
+The analytics Postgres integration suite (`npm run test:integration`) runs
+against a live database and is skipped locally when `DATABASE_URL` is unset.
+CI runs it against a Postgres 16 service after applying migrations. The suite
+exercises the raw SQL queries in the analytics service, including type casts,
+`date_trunc`, and large i128 amounts.
+
+## Dependency updates
+
+Dependabot opens pull requests for npm packages, GitHub Actions, and the Docker
+base image on a weekly schedule. Minor and patch npm updates are grouped
+together to reduce noise.
+
+CI runs `npm audit --omit=dev --audit-level=high` to catch known
+vulnerabilities in runtime dependencies. Development dependencies are excluded
+because they do not ship to production. Findings that cannot be fixed
+immediately should be documented in the PR with either a mitigation plan or a
+justification for accepting the risk.
+
+## Issue and pull request templates
+
+Use the provided templates when opening issues or pull requests:
+
+- **Bug reports** include Summary, Steps to reproduce, Expected vs Actual
+  behavior sections
+- **Feature requests** include Summary, Problem/motivation, and Acceptance
+  criteria sections
+- **Pull requests** should reference the issue they close (`Closes #123`) and
+  include the checklist of commands CI runs
+
+Do not report security issues as public issues or pull requests. See
+[SECURITY.md](https://github.com/Novatip/novatip-docs/blob/main/SECURITY.md).
+
+Review routing is handled by the `CODEOWNERS` file.
+
 ## Opening a pull request
 
 - One issue per pull request, opened against `main`
