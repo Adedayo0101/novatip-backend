@@ -19,6 +19,7 @@ const server = await buildServer();
 // Start the Soroban event indexer in the background
 startIndexer().catch((err) => {
   server.log.error(err, "[indexer] fatal startup error");
+  process.exit(1);
 });
 
 // Age out old webhook delivery rows on a schedule

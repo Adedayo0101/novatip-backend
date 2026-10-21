@@ -8,7 +8,13 @@
  */
 
 import { jest } from "@jest/globals";
-import { fetchLatestLedger } from "../../indexer/rpc.js";
+
+process.env["DATABASE_URL"] ??= "postgresql://user:pass@localhost:5432/test";
+process.env["JWT_SECRET"] ??= "test-secret-at-least-32-chars-long-123456";
+process.env["TIP_SPLITTER_CONTRACT_ID"] ??= `C${"A".repeat(55)}`;
+
+const { config } = await import("../../config.js");
+const { fetchLatestLedger } = await import("../../indexer/rpc.js");
 
 const RPC_URL = "https://soroban-testnet.stellar.org";
 
@@ -108,5 +114,27 @@ describe("fetchLatestLedger", () => {
 
     const seq = await fetchLatestLedger(RPC_URL, 10_000);
     expect(seq).toBe(9_999);
+  });
+
+  it("defaults the timeout to config.stellar.rpcTimeoutMs, not an env var read of its own", async () => {
+    jest.useFakeTimers();
+    try {
+      mockFetch.mockImplementation(
+        (_url, init) =>
+          new Promise((_resolve, reject) => {
+            init?.signal?.addEventListener("abort", () =>
+              reject(new Error("aborted")),
+            );
+          }),
+      );
+
+      const result = fetchLatestLedger(RPC_URL);
+      const assertion = expect(result).rejects.toThrow("aborted");
+
+      await jest.advanceTimersByTimeAsync(config.stellar.rpcTimeoutMs);
+      await assertion;
+    } finally {
+      jest.useRealTimers();
+    }
   });
 });

@@ -22,7 +22,11 @@ import {
   deleteCreator,
   type PublicCreator,
 } from "./creator.service.js";
-import { creatorEmail, httpsUrl } from "../../utils/validation.js";
+import {
+  creatorEmail,
+  httpsUrl,
+  validateSlugParam,
+} from "../../utils/validation.js";
 
 const RenameSlugBody = z.object({
   slug: z.string().min(3).max(32),
@@ -56,7 +60,9 @@ const UpdateSplitsBody = z.object({
 export const creatorRoutes: FastifyPluginAsync = async (app) => {
   // ── GET /:slug — public ────────────────────────────────────────────────────
   app.get("/:slug", async (request, reply) => {
-    const { slug } = request.params as { slug: string };
+    const slug = validateSlugParam(request.params, reply);
+    if (slug === null) return;
+
     const creator: PublicCreator = await getCreatorBySlug(slug);
     return reply.send({ creator });
   });

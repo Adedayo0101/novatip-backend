@@ -27,9 +27,13 @@ async function main(): Promise<void> {
     return;
   }
 
-  console.warn(`${creators.length} existing creator(s) hold a now-reserved slug:`);
+  console.warn(
+    `${creators.length} existing creator(s) hold a now-reserved slug:`,
+  );
   for (const creator of creators) {
-    console.warn(`  ${creator.slug} — ${creator.id} (${creator.walletAddress}, created ${creator.createdAt.toISOString()})`);
+    console.warn(
+      `  ${creator.slug} — ${creator.id} (${creator.walletAddress}, created ${creator.createdAt.toISOString()})`,
+    );
   }
 }
 

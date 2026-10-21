@@ -2,7 +2,7 @@
   "root": true,
   "parser": "@typescript-eslint/parser",
   "parserOptions": {
-    "project": "./tsconfig.json",
+    "project": ["./tsconfig.json", "./tsconfig.scripts.json"],
     "ecmaVersion": 2022,
     "sourceType": "module"
   },
@@ -28,5 +28,15 @@
   "env": {
     "node": true,
     "es2022": true
-  }
+  },
+  "overrides": [
+    {
+      // One-off CLI entry points run with `tsx`, not part of the server —
+      // they have no pino logger to write to, so console is the only output.
+      "files": ["scripts/**/*.ts", "prisma/seed.ts"],
+      "rules": {
+        "no-console": "off"
+      }
+    }
+  ]
 }

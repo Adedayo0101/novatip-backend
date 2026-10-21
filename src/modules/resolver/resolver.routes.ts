@@ -17,10 +17,12 @@
 import type { FastifyPluginAsync } from "fastify";
 import { getCreatorBySlug } from "../creator/creator.service.js";
 import { config } from "../../config.js";
+import { validateSlugParam } from "../../utils/validation.js";
 
 export const resolverRoutes: FastifyPluginAsync = async (app) => {
   app.get("/:slug", async (request, reply) => {
-    const { slug } = request.params as { slug: string };
+    const slug = validateSlugParam(request.params, reply);
+    if (slug === null) return;
 
     const creator = await getCreatorBySlug(slug);
 
