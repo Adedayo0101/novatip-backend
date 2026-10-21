@@ -215,6 +215,7 @@ export interface RecentTip {
   fromAddress: string;
   amount: string; // stroops as string (i128 precision)
   message: string;
+  messageHidden: boolean;
   /**
    * Ledger close time as an ISO 8601 string rather than a Date. Over the wire
    * these were always ISO strings — JSON has no date type — but the cached and
@@ -283,6 +284,7 @@ export async function getRecentTips(
       fromAddress: true,
       amount: true,
       message: true,
+      messageHidden: true,
       ledgerAt: true,
     },
   });
@@ -307,6 +309,7 @@ export function toRecentTipsPage(
     fromAddress: string;
     amount: string;
     message: string;
+    messageHidden: boolean;
     ledgerAt: Date;
   }>,
   take: number,
@@ -322,6 +325,7 @@ export function toRecentTipsPage(
       fromAddress: row.fromAddress,
       amount: row.amount,
       message: row.message,
+      messageHidden: row.messageHidden,
       ledgerAt: row.ledgerAt.toISOString(),
     })),
     // A cursor is only issued when there is something after it, so a client
@@ -506,6 +510,7 @@ export async function getPublicRecentTips(
       fromAddress: true,
       amount: true,
       message: true,
+      messageHidden: true,
       ledgerAt: true,
     },
   });
@@ -528,6 +533,7 @@ export function toPublicTipsPage(
     fromAddress: string;
     amount: string;
     message: string;
+    messageHidden: boolean;
     ledgerAt: Date;
   }>,
   take: number,
@@ -541,7 +547,7 @@ export function toPublicTipsPage(
       txHash: row.txHash,
       fromAddress: row.fromAddress,
       amount: row.amount,
-      message: row.message,
+      message: row.messageHidden ? "" : row.message,
       ledgerAt: row.ledgerAt.toISOString(),
     })),
     nextCursor:

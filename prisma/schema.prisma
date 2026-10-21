@@ -99,6 +99,8 @@ model Tip {
   amount      String
   /// Optional supporter message (bounded to the contract's 280-byte limit)
   message     String   @default("") @db.VarChar(280)
+  /// Whether the creator has hidden this message from public view
+  messageHidden Boolean @default(false)
   creatorId   String?
   creator     Creator? @relation(fields: [creatorId], references: [id], onDelete: SetNull)
   createdAt   DateTime @default(now())
@@ -168,6 +170,7 @@ model Notification {
   /// Serialised payload (tip amount, sender, message, etc.)
   payload   Json
   sentAt    DateTime?
+  readAt    DateTime?
   createdAt DateTime @default(now())
 
   @@index([creatorId])
