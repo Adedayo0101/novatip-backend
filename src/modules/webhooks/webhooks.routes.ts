@@ -79,6 +79,10 @@ export const DeliveryQuery = z.object({
     .max(MAX_DELIVERY_PAGE_SIZE)
     .default(DEFAULT_DELIVERY_PAGE_SIZE),
   offset: z.coerce.number().int().min(0).default(0),
+  success: z
+    .enum(["true", "false"])
+    .transform((val) => val === "true")
+    .optional(),
 });
 
 /**
@@ -169,6 +173,7 @@ export const webhookRoutes: FastifyPluginAsync = async (app) => {
       id,
       query.data.limit,
       query.data.offset,
+      query.data.success,
     );
 
     // null means the caller owns no webhook with that id. A webhook that
