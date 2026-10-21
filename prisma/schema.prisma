@@ -172,6 +172,7 @@ model Notification {
   /// Serialised payload (tip amount, sender, message, etc.)
   payload   Json
   sentAt    DateTime?
+  readAt    DateTime?
   createdAt DateTime @default(now())
 
   /// Serves GET /notifications: creator-scoped newest-first paging by
