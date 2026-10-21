@@ -12,6 +12,7 @@ import QRCode from "qrcode";
 import { z } from "zod";
 import { config } from "../../config.js";
 import { getCreatorBySlug } from "../creator/creator.service.js";
+import { validateSlugParam } from "../../utils/validation.js";
 
 export const PNG_QR_WIDTH_DEFAULT = 512;
 export const PNG_QR_WIDTH_MIN = 64;
@@ -85,7 +86,8 @@ export const qrRoutes: FastifyPluginAsync = async (app) => {
 
   // ── GET /:slug — SVG ───────────────────────────────────────────────────────
   app.get("/:slug", async (request, reply) => {
-    const { slug } = request.params as { slug: string };
+    const slug = validateSlugParam(request.params, reply);
+    if (slug === null) return;
 
     // Validate the creator exists before generating
     await getCreatorBySlug(slug);
@@ -106,7 +108,9 @@ export const qrRoutes: FastifyPluginAsync = async (app) => {
 
   // ── GET /:slug/png — PNG ───────────────────────────────────────────────────
   app.get("/:slug/png", async (request, reply) => {
-    const { slug } = request.params as { slug: string };
+    const slug = validateSlugParam(request.params, reply);
+    if (slug === null) return;
+
     const query = PngQuery.safeParse(request.query);
     if (!query.success) {
       return reply.status(400).send({ error: query.error.flatten() });
