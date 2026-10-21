@@ -46,10 +46,12 @@ const ClaimBody = z.object({
 });
 
 const UpdateProfileBody = z.object({
-  displayName: z.string().max(80).optional(),
-  bio: z.string().max(300).optional(),
-  avatarUrl: httpsUrl("Avatar URL").optional(),
-  // Nullable so the field can be cleared; omitting it leaves it unchanged.
+  // Nullable so each field can be cleared; omitting a key leaves it
+  // unchanged. displayName, bio and avatarUrl also treat an empty or
+  // whitespace-only string as a clear — see nullableText/nullableHttpsUrl.
+  displayName: nullableText(80, "Display name").optional(),
+  bio: nullableText(300, "Bio").optional(),
+  avatarUrl: nullableHttpsUrl("Avatar URL").optional(),
   email: creatorEmail.nullable().optional(),
 });
 

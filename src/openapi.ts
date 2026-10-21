@@ -894,13 +894,20 @@ export const openApiSpecification = {
       },
       UpdateProfileRequest: {
         type: "object",
+        description:
+          "Every field is optional; an omitted key leaves the stored value unchanged. For displayName, bio and avatarUrl, null or an empty/whitespace-only string clears the stored value — values are trimmed before storing.",
         properties: {
-          displayName: { type: "string", maxLength: 80 },
-          bio: { type: "string", maxLength: 300 },
+          displayName: {
+            type: "string",
+            maxLength: 80,
+            nullable: true,
+          },
+          bio: { type: "string", maxLength: 300, nullable: true },
           avatarUrl: {
             type: "string",
             format: "uri",
             pattern: "^https://",
+            nullable: true,
           },
           email: { type: "string", format: "email", nullable: true },
         },

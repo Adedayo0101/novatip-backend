@@ -28,8 +28,11 @@ export { jarIdForSlug, resolveJarId } from "./jar-id.js";
  * format is pinned to auth.service's generation on purpose, so a creator who
  * somehow holds anything else — even a near-miss like user_1234abc — counts
  * as having claimed and must go through renameSlug.
+ *
+ * Exported so placeholder-retention.ts uses the exact same definition when
+ * deciding which creators are still unclaimed sign-in placeholders.
  */
-const PLACEHOLDER_SLUG_REGEX = /^user_[0-9a-f]{8}$/;
+export const PLACEHOLDER_SLUG_REGEX = /^user_[0-9a-f]{8}$/;
 const PROFILE_CACHE_TTL = 60; // seconds
 const MILLIS_PER_DAY = 86_400_000;
 
@@ -104,9 +107,15 @@ export interface ClaimSlugInput {
 
 export interface UpdateProfileInput {
   creatorId: string;
-  displayName?: string | undefined;
-  bio?: string | undefined;
-  avatarUrl?: string | undefined;
+  /**
+   * `null` clears it, same reasoning as `email` below — an absent key means
+   * "leave unchanged", and a creator removing their display name, bio or
+   * avatar needs a way to take it back rather than being stuck with
+   * whatever they last set.
+   */
+  displayName?: string | null | undefined;
+  bio?: string | null | undefined;
+  avatarUrl?: string | null | undefined;
   /**
    * Contact address for tip notifications. `null` clears it — a creator who
    * changes their mind needs a way to take the address back, and an absent

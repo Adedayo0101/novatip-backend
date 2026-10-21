@@ -292,6 +292,33 @@ export const config = {
      * the hold, freeing a slug the moment it is released.
      */
     slugHoldDays: optionalInt("CREATOR_SLUG_HOLD_DAYS", 90, 0),
+
+    /**
+     * Days after which an abandoned sign-in placeholder — a creator still on
+     * its auto-generated user_xxxxxxxx slug, with no tips, webhooks,
+     * notifications or released slugs — becomes eligible for deletion. A
+     * wallet costs nothing to sign in with, and the per-process challenge
+     * rate limit is the only other brake on how many of these accumulate, so
+     * this is what ages the abandoned ones out. 0 disables the job and keeps
+     * every placeholder forever.
+     */
+    placeholderRetentionDays: optionalInt(
+      "PLACEHOLDER_CREATOR_RETENTION_DAYS",
+      30,
+      0,
+    ),
+    /** Rows deleted per statement, so a large backlog never locks the table. */
+    placeholderPruneBatchSize: optionalInt(
+      "PLACEHOLDER_CREATOR_PRUNE_BATCH_SIZE",
+      500,
+      1,
+    ),
+    /** How often the placeholder pruner runs. */
+    placeholderPruneIntervalMinutes: optionalInt(
+      "PLACEHOLDER_CREATOR_PRUNE_INTERVAL_MINUTES",
+      60,
+      1,
+    ),
   },
 
   rateLimits: {

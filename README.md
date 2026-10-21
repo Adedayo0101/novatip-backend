@@ -143,6 +143,9 @@ INDEXER_RPC_TIMEOUT_MS - Timeout for indexer RPC calls in milliseconds (default:
 INDEXER_POLL_INTERVAL_MS - How often the indexer polls Soroban RPC for new TipReceived events, in milliseconds (default: 6000)
 INDEXER_POLL_LIMIT - Max TipReceived events fetched from Soroban RPC per poll iteration (default: 200)
 CREATOR_SLUG_HOLD_DAYS - Days a slug released by renaming (or by a claim that leaves the sign-in placeholder behind) stays reserved for its previous owner before anyone else may claim it (default: 90, 0 disables the hold)
+PLACEHOLDER_CREATOR_RETENTION_DAYS - Days before an abandoned sign-in placeholder (unclaimed user_xxxxxxxx slug, no tips, webhooks, notifications or released slugs) becomes eligible for deletion (default: 30, 0 disables the job)
+PLACEHOLDER_CREATOR_PRUNE_BATCH_SIZE - Rows deleted per statement (default: 500)
+PLACEHOLDER_CREATOR_PRUNE_INTERVAL_MINUTES - How often the placeholder pruner runs (default: 60)
 MAX_WEBHOOKS_PER_CREATOR - Most webhooks one creator may register (default: 5, 0 removes the cap)
 WEBHOOK_TIMEOUT_MS - Timeout for a webhook endpoint to answer before the delivery is recorded as failed, in milliseconds (default: 5000)
 WEBHOOK_MAX_BODY_SIZE - Max response body bytes captured in delivery logs (default: 1024)
@@ -213,6 +216,12 @@ for tip notifications. It is private: the public creator endpoint and
 /resolve/:slug both read through getCreatorBySlug, whose select allowlists the
 world-readable columns and omits it. Send null to clear a stored address; omit
 the field to leave it unchanged.
+
+displayName, bio and avatarUrl follow the same omit-to-leave-unchanged rule.
+Unlike email, they also accept an empty or whitespace-only string as a way to
+clear them — a form field that was merely erased shouldn't have to send null
+instead. Values are trimmed before storing either way, so " " and "" both
+clear the field rather than storing whitespace.
 
 DELETE /creators/me permanently removes the authenticated creator's profile
 and frees their slug. It also deletes their notifications, webhooks, and
