@@ -323,6 +323,12 @@ export const config = {
      * permissive — a single client could exhaust it with QR requests alone.
      */
     qr: optionalInt("QR_RATE_LIMIT", 10),
+
+    /**
+     * Per-user cap on CSV export. Each call streams a creator's entire tip
+     * history through the database in batches of 500.
+     */
+    csvExport: optionalInt("CSV_EXPORT_RATE_LIMIT", 5),
   },
 
   appBaseUrl,
