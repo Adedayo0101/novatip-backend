@@ -37,6 +37,10 @@ import { logger } from "../utils/logger.js";
 import { persistTip, updateCursor, readCursor } from "./persist.js";
 import { dispatchWebhooks } from "../modules/webhooks/webhooks.service.js";
 import { sendTipNotification } from "../modules/notifications/email.service.js";
+import {
+  recordPollError,
+  recordSuccessfulPoll,
+} from "./status.js";
 
 /**
  * How often (in ms) the indexer loop polls the Soroban RPC for new TipReceived events.
@@ -192,8 +196,6 @@ async function runLoop(options?: IndexerOptions): Promise<void> {
           await handleEvent(event);
         }
 
-        // Advance past the ledgers just handled — startLedger is inclusive, so
-        // leaving it on a processed ledger re-runs webhooks and emails.
         startLedger = nextStartLedger;
 
         if (cursorLedger !== null) {
@@ -223,18 +225,17 @@ async function runLoop(options?: IndexerOptions): Promise<void> {
 
       // Successful poll resets consecutive failure count
       consecutiveFailures = 0;
+      recordSuccessfulPoll();
     } catch (err) {
       consecutiveFailures++;
+      recordPollError(err);
       const backoffMs = calculatePollBackoff(consecutiveFailures);
       indexerLogger.error(
         { err, startLedger, consecutiveFailures, backoffMs },
         "poll error",
       );
-      await sleep(backoffMs);
-      indexerLogger.error({ err, startLedger }, "poll error");
       if (!running) break;
-      // Back off slightly on error to avoid hammering the RPC
-      await interruptibleSleep(pollIntervalMs * 2);
+      await interruptibleSleep(backoffMs);
       continue;
     }
 
@@ -266,17 +267,21 @@ export function stopIndexer(): Promise<void> {
 // ── Event handler ─────────────────────────────────────────────────────────────
 
 async function handleEvent(event: TipEvent): Promise<void> {
-  // The real transaction hash, carried through from the RPC. This used to be
-  // synthesised as `jarId:ledger:from`, under which two tips from the same
-  // sender to the same jar in one ledger produced identical keys — the upsert
-  // in persistTip then treated the second as a duplicate and dropped it.
   const txHash = event.txHash;
 
-  try {
-    await persistTip(event, txHash);
-    await dispatchWebhooks(event);
-    await sendTipNotification(event);
-  } catch (err) {
-    indexerLogger.error({ err, txHash }, "failed to handle event");
+  const isNew = await persistTip(event, txHash);
+
+  if (isNew) {
+    try {
+      await dispatchWebhooks(event);
+    } catch (err) {
+      indexerLogger.warn({ err, txHash }, "webhook dispatch failed");
+    }
+
+    try {
+      await sendTipNotification(event);
+    } catch (err) {
+      indexerLogger.warn({ err, txHash }, "tip notification failed");
+    }
   }
 }

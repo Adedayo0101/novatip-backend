@@ -18,6 +18,8 @@ import type {
   FastifyRequest,
 } from "fastify";
 import { z } from "zod";
+import { config } from "../../config.js";
+import { redis } from "../../redis.js";
 import { db } from "../../db.js";
 import {
   getTotals,
@@ -54,6 +56,14 @@ const RecentQuery = z.object({
 export const analyticsRoutes: FastifyPluginAsync = async (app) => {
   // All analytics routes require a valid JWT
   app.addHook("onRequest", app.authenticate);
+
+  await app.register(import("@fastify/rate-limit"), {
+    max: config.rateLimits.csvExport,
+    timeWindow: "1 minute",
+    redis,
+    keyGenerator: (request) => `csv-export:${request.user?.sub ?? "anon"}`,
+    skipOnError: true,
+  });
 
   // ── GET /totals ────────────────────────────────────────────────────────────
   app.get("/totals", async (request, reply) => {
@@ -124,11 +134,6 @@ export const analyticsRoutes: FastifyPluginAsync = async (app) => {
     };
 
   app.get("/export", exportCsv);
-  app.get("/csv", exportCsv);
-  app.get("/recent.csv", exportCsv);
-  app.get("/export.csv", exportCsv);
-  app.get("/tips.csv", exportCsv);
-  app.get("/history.csv", exportCsv);
 
   // ── GET /collaborators ─────────────────────────────────────────────────────
   app.get("/collaborators", async (request, reply) => {

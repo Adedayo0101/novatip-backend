@@ -17,65 +17,45 @@ git remote add upstream https://github.com/Novatip/novatip-backend
 git checkout -b fix/short-description
 ```
 
-This package resolves `@novatip/sdk` from a sibling checkout, so clone and
-build it alongside this repo:
+`@novatip/sdk` is a `github:Novatip/novatip-sdk#...` dependency in
+`package.json` — npm clones it straight from GitHub and builds it itself
+through its own `prepare` script, so `npm install` needs `git` on your PATH,
+but no sibling checkout of `novatip-sdk`:
 
 ```bash
-git clone https://github.com/Novatip/novatip-sdk ../novatip-sdk
-(cd ../novatip-sdk && npm ci && npm run build)
 npm install
 npx prisma generate
 ```
 
-PostgreSQL and Redis are needed to run the service (not to run the checks).
-See the README for the local setup.
+PostgreSQL and Redis are needed to run the service. See the README for the
+local setup.
 
 ## Before you push
 
 CI runs exactly these, so run them locally first:
 
 ```bash
+npx prisma generate
+npx prisma validate
+npx prisma migrate diff \
+  --from-migrations prisma/migrations \
+  --to-schema-datamodel prisma/schema.prisma \
+  --shadow-database-url "$SHADOW_DATABASE_URL" \
+  --exit-code
 npm run lint
+npm run check:env-docs
 npm run typecheck
 npm test
 npm run build
 ```
 
-### Integration tests
-
-The analytics Postgres integration suite (`npm run test:integration`) runs
-against a live database and is skipped locally when `DATABASE_URL` is unset.
-CI runs it against a Postgres 16 service after applying migrations. The suite
-exercises the raw SQL queries in the analytics service, including type casts,
-`date_trunc`, and large i128 amounts.
-
-## Dependency updates
-
-Dependabot opens pull requests for npm packages, GitHub Actions, and the Docker
-base image on a weekly schedule. Minor and patch npm updates are grouped
-together to reduce noise.
-
-CI runs `npm audit --omit=dev --audit-level=high` to catch known
-vulnerabilities in runtime dependencies. Development dependencies are excluded
-because they do not ship to production. Findings that cannot be fixed
-immediately should be documented in the PR with either a mitigation plan or a
-justification for accepting the risk.
-
-## Issue and pull request templates
-
-Use the provided templates when opening issues or pull requests:
-
-- **Bug reports** include Summary, Steps to reproduce, Expected vs Actual
-  behavior sections
-- **Feature requests** include Summary, Problem/motivation, and Acceptance
-  criteria sections
-- **Pull requests** should reference the issue they close (`Closes #123`) and
-  include the checklist of commands CI runs
-
-Do not report security issues as public issues or pull requests. See
-[SECURITY.md](https://github.com/Novatip/novatip-docs/blob/main/SECURITY.md).
-
-Review routing is handled by the `CODEOWNERS` file.
+The `migrate diff` step replays `prisma/migrations` onto a scratch Postgres
+database (used only as a shadow database, not your dev one) and diffs the
+result against `schema.prisma`. A non-empty diff means either a schema
+change has no migration, or a migration was hand-edited and no longer
+matches `schema.prisma` — fix it before pushing, since `prisma migrate
+deploy` would otherwise drift from the schema at deploy time. If you changed
+`prisma/schema.prisma`, add the migration with `npm run db:migrate`.
 
 ## Opening a pull request
 

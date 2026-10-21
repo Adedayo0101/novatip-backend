@@ -9,6 +9,7 @@ import Fastify, {
   FastifyInstance,
   FastifyRequest,
   FastifyReply,
+  RouteOptions,
 } from "fastify";
 import cors from "@fastify/cors";
 import helmet from "@fastify/helmet";
@@ -19,12 +20,29 @@ import { disconnectDb } from "./db.js";
 import { disconnectRedis, redis } from "./redis.js";
 import { buildLoggerOptions } from "./utils/logger.js";
 
-export async function buildServer(): Promise<FastifyInstance> {
+export interface BuildServerOptions {
+  /**
+   * Fires once per route registered on the server (including Fastify's
+   * automatic HEAD route for every GET). Exists so tests can enumerate the
+   * routes this server actually registers — e.g. to check each one has an
+   * OpenAPI spec entry — without hand-maintaining a second list that can
+   * drift from this one.
+   */
+  onRoute?: (routeOptions: RouteOptions & { url: string }) => void;
+}
+
+export async function buildServer(
+  options: BuildServerOptions = {},
+): Promise<FastifyInstance> {
   const isProduction = config.nodeEnv === "production";
 
   const server = Fastify({
     logger: buildLoggerOptions(isProduction),
   });
+
+  if (options.onRoute) {
+    server.addHook("onRoute", options.onRoute);
+  }
 
   // ── Security plugins ──────────────────────────────────────────────────────
   await server.register(helmet, { contentSecurityPolicy: false });
@@ -43,7 +61,7 @@ export async function buildServer(): Promise<FastifyInstance> {
   // ── Auth plugin ───────────────────────────────────────────────────────────
   await server.register(jwt, {
     secret: config.jwtSecret,
-    sign: { expiresIn: "7d" },
+    sign: { expiresIn: config.jwtExpiresIn },
   });
 
   // ── Decorators ────────────────────────────────────────────────────────────
@@ -112,16 +130,27 @@ export async function buildServer(): Promise<FastifyInstance> {
     { prefix: "/api/v1" },
   );
 
+  server.setNotFoundHandler((request, reply) => {
+    reply.status(404).send({
+      error: {
+        code: "NOT_FOUND",
+        message: `Route ${request.method} ${request.url} not found`,
+      },
+    });
+  });
+
   // ── Global error handler ──────────────────────────────────────────────────
   server.setErrorHandler((error, request, reply) => {
     server.log.error({ err: error, url: request.url }, "Unhandled error");
 
     const statusCode = error.statusCode ?? 500;
+    const isServerError = statusCode >= 500;
+    
     reply.status(statusCode).send({
       error: {
-        code: error.code ?? "INTERNAL_SERVER_ERROR",
+        code: isProduction && isServerError ? "INTERNAL_SERVER_ERROR" : (error.code ?? "INTERNAL_SERVER_ERROR"),
         message:
-          config.nodeEnv === "production" && statusCode === 500
+          isProduction && isServerError
             ? "An unexpected error occurred."
             : error.message,
       },

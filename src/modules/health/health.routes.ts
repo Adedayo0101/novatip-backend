@@ -14,7 +14,6 @@ import type { FastifyPluginAsync } from "fastify";
 import { getIndexerStatus, getReadiness } from "./health.service.js";
 import { config } from "../../config.js";
 
-
 function getPackageVersion(): string {
   try {
     const pkg = JSON.parse(
@@ -65,6 +64,8 @@ export const healthRoutes: FastifyPluginAsync = async (app) => {
   app.get("/indexer", async () => ({
     ...(await getIndexerStatus()),
     ts: new Date().toISOString(),
+  }));
+
   // ── GET /version ─────────────────────────────────────────────────────────────
   // Public build metadata for deploy verification: clients can confirm the
   // package version and git commit being served without exposing any secrets.
