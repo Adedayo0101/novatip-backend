@@ -77,15 +77,32 @@ export async function cacheSet(
   value: unknown,
   ttlSeconds: number,
 ): Promise<void> {
-  await redis.set(`cache:${key}`, JSON.stringify(value), "EX", ttlSeconds);
+  const fullKey = `cache:${key}`;
+  const serialized = JSON.stringify(value);
+
+  try {
+    await redis.set(fullKey, serialized, "EX", ttlSeconds);
+  } catch (err) {
+    redisLogger.warn({ err, key: fullKey }, "failed to write cache entry");
+  }
 }
 
 /**
- * Retrieve a cached JSON value. Returns null on miss.
+ * Retrieve a cached JSON value. Returns null on miss or Redis failure.
  */
 export async function cacheGet<T>(key: string): Promise<T | null> {
   const fullKey = `cache:${key}`;
-  const raw = await redis.get(fullKey);
+  let raw: string | null;
+  try {
+    raw = await redis.get(fullKey);
+  } catch (err) {
+    redisLogger.warn(
+      { err, key: fullKey },
+      "cache read failed — treating as a miss",
+    );
+    return null;
+  }
+
   if (!raw) return null;
 
   try {
@@ -118,5 +135,10 @@ export async function cacheGet<T>(key: string): Promise<T | null> {
  * Invalidate a cache entry.
  */
 export async function cacheInvalidate(key: string): Promise<void> {
-  await redis.del(`cache:${key}`);
+  const fullKey = `cache:${key}`;
+  try {
+    await redis.del(fullKey);
+  } catch (err) {
+    redisLogger.warn({ err, key: fullKey }, "failed to invalidate cache entry");
+  }
 }

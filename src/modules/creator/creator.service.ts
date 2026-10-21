@@ -15,11 +15,10 @@ import { db } from "../../db.js";
 import { config } from "../../config.js";
 import { cacheInvalidate, cacheGet, cacheSet } from "../../redis.js";
 import { resolveJarId } from "./jar-id.js";
+import { CREATOR_SLUG_REGEX } from "../../utils/validation.js";
 
 // Re-exported so callers keep importing the creator API from one place.
 export { jarIdForSlug, resolveJarId } from "./jar-id.js";
-
-const SLUG_REGEX = /^[a-z0-9_-]{3,32}$/;
 
 /**
  * The sign-in placeholder every new wallet starts on: auth.service mints
@@ -29,8 +28,11 @@ const SLUG_REGEX = /^[a-z0-9_-]{3,32}$/;
  * format is pinned to auth.service's generation on purpose, so a creator who
  * somehow holds anything else — even a near-miss like user_1234abc — counts
  * as having claimed and must go through renameSlug.
+ *
+ * Exported so placeholder-retention.ts uses the exact same definition when
+ * deciding which creators are still unclaimed sign-in placeholders.
  */
-const PLACEHOLDER_SLUG_REGEX = /^user_[0-9a-f]{8}$/;
+export const PLACEHOLDER_SLUG_REGEX = /^user_[0-9a-f]{8}$/;
 const PROFILE_CACHE_TTL = 60; // seconds
 const MILLIS_PER_DAY = 86_400_000;
 
@@ -105,9 +107,15 @@ export interface ClaimSlugInput {
 
 export interface UpdateProfileInput {
   creatorId: string;
-  displayName?: string | undefined;
-  bio?: string | undefined;
-  avatarUrl?: string | undefined;
+  /**
+   * `null` clears it, same reasoning as `email` below — an absent key means
+   * "leave unchanged", and a creator removing their display name, bio or
+   * avatar needs a way to take it back rather than being stuck with
+   * whatever they last set.
+   */
+  displayName?: string | null | undefined;
+  bio?: string | null | undefined;
+  avatarUrl?: string | null | undefined;
   /**
    * Contact address for tip notifications. `null` clears it — a creator who
    * changes their mind needs a way to take the address back, and an absent
@@ -195,7 +203,7 @@ async function recordSlugRelease(
  * claim is the one-time transition off the sign-in placeholder).
  */
 export async function claimSlug(input: ClaimSlugInput) {
-  if (!SLUG_REGEX.test(input.slug)) {
+  if (!CREATOR_SLUG_REGEX.test(input.slug)) {
     throw Object.assign(
       new Error(
         "Slug must be 3–32 characters: lowercase letters, numbers, hyphens, underscores.",
@@ -259,9 +267,6 @@ export async function claimSlug(input: ClaimSlugInput) {
   try {
     creator = await db.creator.update({
       where: { id: input.creatorId },
-      // Optional fields are spread in only when supplied. Prisma reads a missing
-      // key as "leave unchanged", but exactOptionalPropertyTypes rejects passing
-      // an explicit undefined to say the same thing.
       data: {
         slug: input.slug,
         jarId,
@@ -276,8 +281,16 @@ export async function claimSlug(input: ClaimSlugInput) {
     throw toClaimConflict(err);
   }
 
-  // Only after the write succeeded: a claim that lost its race must not put
-  // a hold on the slug it never got.
+  await db.tip.updateMany({
+    where: {
+      jarId,
+      creatorId: null,
+    },
+    data: {
+      creatorId: creator.id,
+    },
+  });
+
   if (current && current.slug !== input.slug) {
     await recordSlugRelease(current.slug, input.creatorId);
   }
@@ -307,7 +320,7 @@ export interface RenameSlugInput {
  * hold — and invalidates the resolver cache for both the old and new slug.
  */
 export async function renameSlug(input: RenameSlugInput) {
-  if (!SLUG_REGEX.test(input.slug)) {
+  if (!CREATOR_SLUG_REGEX.test(input.slug)) {
     throw Object.assign(
       new Error(
         "Slug must be 3–32 characters: lowercase letters, numbers, hyphens, underscores.",
@@ -524,7 +537,7 @@ export async function isSlugAvailable(
   slug: string,
   viewerId?: string,
 ): Promise<boolean> {
-  if (!SLUG_REGEX.test(slug)) return false;
+  if (!CREATOR_SLUG_REGEX.test(slug)) return false;
   if (RESERVED_SLUGS.has(slug)) return false;
   const existing = await db.creator.findUnique({ where: { slug } });
   if (existing) return false;
