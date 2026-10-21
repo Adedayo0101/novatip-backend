@@ -17,6 +17,26 @@ jobs:
         # 20 is what the Dockerfile ships on; 24 is the current LTS line.
         node-version: [20, 24]
 
+    # Used as the shadow database for `prisma migrate diff` below, not by the
+    # app or its tests.
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: novatip
+          POSTGRES_PASSWORD: novatip
+          POSTGRES_DB: novatip
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U novatip"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL: postgresql://novatip:novatip@localhost:5432/novatip
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -34,6 +54,23 @@ jobs:
 
       - name: Generate Prisma client
         run: npx prisma generate
+
+      - name: Validate Prisma schema
+        run: npx prisma validate
+
+      # Replays prisma/migrations onto the service Postgres above (used only
+      # as a scratch shadow database) and diffs the result against
+      # schema.prisma. A schema change with no migration, or a hand-edited
+      # migration that no longer produces the schema, shows up as a non-empty
+      # diff and fails the step instead of surfacing at `migrate deploy` on
+      # deploy.
+      - name: Check migrations match schema.prisma
+        run: |
+          npx prisma migrate diff \
+            --from-migrations prisma/migrations \
+            --to-schema-datamodel prisma/schema.prisma \
+            --shadow-database-url "$DATABASE_URL" \
+            --exit-code
 
       - name: Lint
         run: npm run lint

@@ -45,4 +45,9 @@ describe("indexer poll settings configuration (#80)", () => {
     expect(POLL_INTERVAL_MS).toBe(config.indexer.pollIntervalMs);
     expect(POLL_LIMIT).toBe(config.indexer.pollLimit);
   });
+
+  test("the poll settings are defined once, under config.indexer only", () => {
+    expect(config.stellar).not.toHaveProperty("indexerPollIntervalMs");
+    expect(config.stellar).not.toHaveProperty("indexerPollLimit");
+  });
 });

@@ -125,6 +125,7 @@ this list against that file so the two cannot drift apart again.
 
 DATABASE_URL (required) - PostgreSQL connection string
 JWT_SECRET (required) - Secret for signing JWTs; must be at least 32 characters (a short secret is brute-forceable)
+JWT_EXPIRES_IN - JWT expiration time in time span format (default: 7d; examples: "30m", "12h", "7d")
 TIP_SPLITTER_CONTRACT_ID (required) - Deployed contract ID
 WEBHOOK_ENCRYPTION_KEY (required in production) - 32-byte AES-256-GCM key as 64 hex characters; generate with `openssl rand -hex 32`. Keep it outside the database and do not change it after webhook secrets are encrypted.
 WEBHOOK_ALLOW_PRIVATE_HOSTS - Allow webhook URLs to target private IP addresses (default: false; local development only)
@@ -139,8 +140,13 @@ NETWORK_PASSPHRASE - Stellar network passphrase (default: "Test SDF Network ; Se
 USDC_CONTRACT_ID (required on mainnet) - USDC Stellar Asset Contract ID (default on testnet/local: CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA, the testnet one)
 INDEXER_START_LEDGER - Ledger to begin indexing from (default: 0)
 INDEXER_RPC_TIMEOUT_MS - Timeout for indexer RPC calls in milliseconds (default: 5000)
+INDEXER_POLL_INTERVAL_MS - How often the indexer polls Soroban RPC for new TipReceived events, in milliseconds (default: 6000)
+INDEXER_POLL_LIMIT - Max TipReceived events fetched from Soroban RPC per poll iteration (default: 200)
 CREATOR_SLUG_HOLD_DAYS - Days a slug released by renaming (or by a claim that leaves the sign-in placeholder behind) stays reserved for its previous owner before anyone else may claim it (default: 90, 0 disables the hold)
 MAX_WEBHOOKS_PER_CREATOR - Most webhooks one creator may register (default: 5, 0 removes the cap)
+WEBHOOK_TIMEOUT_MS - Timeout for a webhook endpoint to answer before the delivery is recorded as failed, in milliseconds (default: 5000)
+WEBHOOK_MAX_BODY_SIZE - Max response body bytes captured in delivery logs (default: 1024)
+WEBHOOK_MAX_PAYLOAD_SIZE - Max stored delivery payload size in bytes (default: 2048)
 WEBHOOK_DELIVERY_RETENTION_DAYS - Prune successful deliveries older than this (default: 30, 0 disables)
 WEBHOOK_DELIVERY_FAILURE_RETENTION_DAYS - Prune failed deliveries older than this (default: 90, 0 disables)
 WEBHOOK_DELIVERY_PRUNE_BATCH_SIZE - Rows deleted per statement (default: 500)
@@ -163,6 +169,7 @@ request body, and response shape.
 GET /health - Simple liveness ping
 GET /health/live - Liveness (process up, no dependency checks)
 GET /health/ready - Readiness (PostgreSQL + Redis reachable; 503 if not)
+GET /health/indexer - Indexer cursor, chain gap, last successful poll time, and last poll error
 GET /health/version - Public build metadata: package version, build commit, and configured network
 
 POST /auth/challenge - Issue one-time sign-in nonce
@@ -532,6 +539,16 @@ underneath — a paused per-webhook `enabled` row still applies when the
 channel is on, and email still needs an address on record
 (PATCH /creators/me).
 
+Every indexed tip for a registered creator creates a `TIP_RECEIVED` row in
+`GET /notifications`, regardless of whether email is configured, enabled, or
+deliverable. `sentAt` is set only after Resend accepts the email; otherwise
+the feed row remains unsent.
+
+Redis is an optional cache for creator profiles and analytics reads. Cache
+read failures behave as misses, while cache writes and invalidations are logged
+without failing the database-backed request. If an invalidation is missed,
+the stale entry is bounded by its configured TTL.
+
 ## Indexer
 
 Polls Soroban RPC every 6s for TipReceived events, persists to PostgreSQL,
@@ -539,7 +556,10 @@ dispatches webhooks, sends email notifications. Resumes from IndexerCursor.
 
 ### Progress status
 
-`GET /api/v1/health/indexer` reports `cursorLedger`, `chainHead`, and `gap`.
+`GET /api/v1/health/indexer` reports `cursorLedger`, `chainHead`, and `gap`,
+along with `lastSuccessfulPollAt` (an ISO timestamp or `null` before any poll
+succeeds) and `lastError` (the most recent poll error message, or `null` when
+the last poll succeeded).
 The chain head includes `status: "known"` and its ledger when the RPC responds;
 if the RPC is unreachable it is returned as `status: "unknown"` and `gap` is
 `null`, while the persisted cursor is still reported.
