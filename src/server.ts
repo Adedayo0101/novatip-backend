@@ -38,6 +38,9 @@ export async function buildServer(
 
   const server = Fastify({
     logger: buildLoggerOptions(isProduction),
+    trustProxy: config.trustProxy > 0 ? config.trustProxy : false,
+    requestTimeout: config.requestTimeoutMs,
+    connectionTimeout: config.connectionTimeoutMs,
   });
 
   if (options.onRoute) {

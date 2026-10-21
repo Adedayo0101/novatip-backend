@@ -368,4 +368,23 @@ export const config = {
    * appBaseUrl so an unconfigured deployment keeps today's behaviour.
    */
   corsAllowedOrigins: optionalList("CORS_ALLOWED_ORIGINS", [appBaseUrl]),
+
+  /**
+   * Number of proxy hops to trust (e.g. 1 for a single load balancer).
+   * When > 0, request.ip is read from X-Forwarded-For. Off by default;
+   * enabling without a proxy lets clients spoof their address.
+   */
+  trustProxy: optionalInt("TRUST_PROXY", 0, 0),
+
+  /**
+   * Request timeout in milliseconds. Limits how long the server waits for
+   * a complete request body. Defaults to 10 seconds.
+   */
+  requestTimeoutMs: optionalInt("REQUEST_TIMEOUT_MS", 10_000, 1),
+
+  /**
+   * Connection timeout in milliseconds. Limits idle connection time.
+   * Defaults to 60 seconds.
+   */
+  connectionTimeoutMs: optionalInt("CONNECTION_TIMEOUT_MS", 60_000, 1),
 } as const;

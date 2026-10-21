@@ -27,13 +27,19 @@ export const MAX_CREATOR_CREATE_ATTEMPTS = 5;
 
 // ── Challenge ─────────────────────────────────────────────────────────────────
 
+export interface ChallengeMessage {
+  message: string;
+  nonce: string;
+}
+
 /**
- * Generate a random nonce and store it in Redis against the wallet address.
+ * Generate a domain-bound challenge message and store the nonce in Redis.
  * The nonce expires after 5 minutes (enforced by Redis TTL).
  */
 export async function generateChallenge(
   walletAddress: string,
-): Promise<string> {
+  domain: string,
+): Promise<ChallengeMessage> {
   if (!isValidAccountId(walletAddress)) {
     throw Object.assign(new Error("Invalid Stellar account address."), {
       statusCode: 400,
@@ -41,8 +47,13 @@ export async function generateChallenge(
   }
 
   const nonce = randomBytes(32).toString("hex");
+  const issuedAt = new Date().toISOString();
+  const expiresAt = new Date(Date.now() + 5 * 60 * 1000).toISOString();
+
+  const message = `${domain} wants you to sign in with your Stellar account:\n${walletAddress}\n\nNonce: ${nonce}\nIssued At: ${issuedAt}\nExpires At: ${expiresAt}`;
+
   await setAuthNonce(walletAddress, nonce);
-  return nonce;
+  return { message, nonce };
 }
 
 // ── Verify ────────────────────────────────────────────────────────────────────
@@ -73,10 +84,12 @@ export interface VerifyResult {
  * challenge before attempting verification again.
  *
  * @param walletAddress - G... Stellar account address
- * @param signatureHex  - Hex-encoded Ed25519 signature over the nonce bytes
+ * @param signedMessage - The full signed message text
+ * @param signatureHex  - Hex-encoded Ed25519 signature over the message
  */
 export async function verifyChallenge(
   walletAddress: string,
+  signedMessage: string,
   signatureHex: string,
   signJwt: (payload: SessionClaims) => string,
 ): Promise<VerifyResult> {
@@ -86,8 +99,6 @@ export async function verifyChallenge(
     });
   }
 
-  // Retrieve and consume the nonce (single-use: burns the nonce before
-  // verification to prevent replay attacks on failed attempts).
   const nonce = await consumeAuthNonce(walletAddress);
   if (!nonce) {
     throw Object.assign(
@@ -96,13 +107,27 @@ export async function verifyChallenge(
     );
   }
 
-  // The public key is derived from walletAddress itself rather than taken from
-  // the client, so there is no separate value that could name a different key
-  // than the one the signature is checked against.
+  if (!signedMessage.includes(`Nonce: ${nonce}`)) {
+    throw Object.assign(
+      new Error("Message does not contain expected nonce."),
+      { statusCode: 401 },
+    );
+  }
+
+  const expiresMatch = signedMessage.match(/Expires At: (.+)/);
+  if (expiresMatch) {
+    const expiresAt = new Date(expiresMatch[1]);
+    if (Date.now() > expiresAt.getTime()) {
+      throw Object.assign(
+        new Error("Challenge message has expired."),
+        { statusCode: 401 },
+      );
+    }
+  }
+
   const publicKey = StrKey.decodeEd25519PublicKey(walletAddress);
 
-  // Verify Ed25519 signature
-  const valid = verifyEd25519(nonce, signatureHex, publicKey);
+  const valid = verifyEd25519(signedMessage, signatureHex, publicKey);
   if (!valid) {
     throw Object.assign(
       new Error("Signature verification failed. Request a new challenge."),
@@ -199,19 +224,10 @@ function sep53Digest(message: string): Buffer {
 }
 
 /**
- * Verify a signature over the challenge nonce.
- *
- * Two payloads are accepted, and both prove the same thing — that the holder
- * of this account's key signed this specific single-use nonce:
- *
- *   1. The SEP-53 digest. This is what Freighter's signMessage and every other
- *      SEP-53 wallet produces, and it is the path the browser actually uses.
- *      Verifying only the raw bytes is why wallet sign-in never worked.
- *   2. The raw nonce bytes, for scripts and tests that sign with a keypair
- *      directly rather than through a wallet.
+ * Verify a signature over the challenge message using SEP-53.
  */
 function verifyEd25519(
-  nonce: string,
+  message: string,
   signatureHex: string,
   publicKey: Buffer,
 ): boolean {
@@ -223,11 +239,9 @@ function verifyEd25519(
 
     const key = new Uint8Array(publicKey);
     const sig = new Uint8Array(signature);
+    const payload = sep53Digest(message);
 
-    const candidates = [sep53Digest(nonce), Buffer.from(nonce, "utf8")];
-    return candidates.some((payload) =>
-      nacl.sign.detached.verify(new Uint8Array(payload), sig, key),
-    );
+    return nacl.sign.detached.verify(new Uint8Array(payload), sig, key);
   } catch {
     return false;
   }
