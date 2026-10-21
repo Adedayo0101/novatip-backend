@@ -1,0 +1,10 @@
+# CODEOWNERS - defines review routing for pull requests
+# Each line is a file pattern followed by one or more owners
+
+# Default owners for everything in the repo
+* @Novatip/maintainers
+
+# Specific owners can be added for subdirectories or files as needed
+# Example:
+# /src/modules/auth/ @Novatip/auth-team
+# /.github/ @Novatip/devops-team
