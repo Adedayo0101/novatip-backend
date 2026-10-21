@@ -11,6 +11,21 @@ jobs:
     name: Lint · Typecheck · Test · Build (Node ${{ matrix.node-version }})
     runs-on: ubuntu-latest
 
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: novatip_test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
     strategy:
       fail-fast: false
       matrix:
@@ -83,6 +98,11 @@ jobs:
 
       - name: Test
         run: npm test
+
+      - name: Integration tests
+        run: npm run test:integration
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/novatip_test
 
       - name: Build
         run: npm run build
