@@ -9,12 +9,19 @@ const readCursorMock = jest.fn<() => Promise<number>>();
 const fetchLatestLedgerMock =
   jest.fn<(url: string, timeoutMs: number) => Promise<number>>();
 const loggerWarnMock = jest.fn();
+const getIndexerPollStatusMock = jest.fn(() => ({
+  lastSuccessfulPollAt: "2026-10-20T10:00:00.000Z",
+  lastError: "RPC unavailable",
+}));
 
 jest.unstable_mockModule("../../indexer/persist.js", () => ({
   readCursor: readCursorMock,
 }));
 jest.unstable_mockModule("../../indexer/rpc.js", () => ({
   fetchLatestLedger: fetchLatestLedgerMock,
+}));
+jest.unstable_mockModule("../../indexer/status.js", () => ({
+  getIndexerPollStatus: getIndexerPollStatusMock,
 }));
 jest.unstable_mockModule("../../utils/logger.js", () => ({
   logger: {
@@ -57,6 +64,8 @@ describe("GET /health/indexer", () => {
       cursorLedger: 123,
       chainHead: { status: "known", ledger: 150 },
       gap: 27,
+      lastSuccessfulPollAt: "2026-10-20T10:00:00.000Z",
+      lastError: "RPC unavailable",
     });
     expect(fetchLatestLedgerMock).toHaveBeenCalledWith(
       expect.any(String),
@@ -78,6 +87,8 @@ describe("GET /health/indexer", () => {
       cursorLedger: 123,
       chainHead: { status: "unknown" },
       gap: null,
+      lastSuccessfulPollAt: "2026-10-20T10:00:00.000Z",
+      lastError: "RPC unavailable",
     });
     expect(loggerWarnMock).toHaveBeenCalledWith(
       { err: rpcError },

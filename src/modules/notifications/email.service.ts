@@ -26,49 +26,57 @@ const emailLogger = logger.child({ component: "notifications" });
  * failing must not stop a tip being recorded or its webhooks being delivered.
  */
 export async function sendTipNotification(event: TipEvent): Promise<void> {
-  if (!config.resend.apiKey) return; // not configured — skip
-
-  const creator = await db.creator.findUnique({
-    where: { jarId: event.jarId },
-  });
-
-  if (!creator) return;
-
-  // Creator-level switch first: the channel is off, so nothing below — the
-  // address check, the send, the notification row — is attempted. A creator's
-  // preference rather than a fault, hence debug: at one line per tip a louder
-  // level would bury the logs of creators who simply chose not to be emailed.
-  if (!creator.emailEnabled) {
-    emailLogger.debug(
-      { slug: creator.slug },
-      "creator has email notifications switched off — skipping tip notification",
-    );
-    return;
-  }
-
-  // Creator.email is optional, and leaving it unset is a normal choice rather
-  // than a misconfiguration — a creator may want webhooks only. Debug, not
-  // warn: at one line per tip this would otherwise be the loudest thing in the
-  // log for every creator who never opted in.
-  if (!creator.email) {
-    emailLogger.debug(
-      { slug: creator.slug },
-      "creator has no email on record — skipping tip notification",
-    );
-    return;
-  }
-
-  const amount = formatUsdc(event.amount, 2);
-  const displayName = creator.displayName ?? creator.slug;
-  const message = event.message ? `"${event.message}"` : "No message left.";
-
-  const safeDisplayName = escapeHtml(displayName);
-  const safeAmount = escapeHtml(amount);
-  const safeMessage = event.message
-    ? `"${escapeHtml(event.message)}"`
-    : "No message left.";
-
   try {
+    const creator = await db.creator.findUnique({
+      where: { jarId: event.jarId },
+    });
+
+    if (!creator) return;
+
+    const notification = await db.notification.create({
+      data: {
+        creatorId: creator.id,
+        type: "TIP_RECEIVED",
+        payload: {
+          from: event.from,
+          amount: event.amount.toString(),
+          message: event.message,
+          ledger: event.ledger,
+          timestamp: event.timestamp,
+        },
+      },
+    });
+
+    // The feed entry is recorded even when the email channel is unavailable
+    // or disabled. `sentAt` stays null until Resend accepts the message.
+    if (!config.resend.apiKey) return;
+
+    if (!creator.emailEnabled) {
+      emailLogger.debug(
+        { slug: creator.slug },
+        "creator has email notifications switched off — skipping tip notification",
+      );
+      return;
+    }
+
+    if (!creator.email) {
+      emailLogger.debug(
+        { slug: creator.slug },
+        "creator has no email on record — skipping tip notification",
+      );
+      return;
+    }
+
+    const amount = formatUsdc(event.amount, 2);
+    const displayName = creator.displayName ?? creator.slug;
+    const message = event.message ? `"${event.message}"` : "No message left.";
+
+    const safeDisplayName = escapeHtml(displayName);
+    const safeAmount = escapeHtml(amount);
+    const safeMessage = event.message
+      ? `"${escapeHtml(event.message)}"`
+      : "No message left.";
+
     // Dynamic import so Resend is only loaded when the API key is set
     const { Resend } = await import("resend");
     const resend = new Resend(config.resend.apiKey);
@@ -107,22 +115,11 @@ export async function sendTipNotification(event: TipEvent): Promise<void> {
       return;
     }
 
-    // Record notification in DB only once the send actually succeeded
-    await db.notification.create({
-      data: {
-        creatorId: creator.id,
-        type: "TIP_RECEIVED",
-        payload: {
-          from: event.from,
-          amount: event.amount.toString(),
-          message: event.message,
-          ledger: event.ledger,
-          timestamp: event.timestamp,
-        },
-        sentAt: new Date(),
-      },
+    await db.notification.update({
+      where: { id: notification.id },
+      data: { sentAt: new Date() },
     });
   } catch (err) {
-    emailLogger.error({ err }, "failed to send email");
+    emailLogger.error({ err }, "failed to record or send tip notification");
   }
 }

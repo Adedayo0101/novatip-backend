@@ -23,8 +23,11 @@ import {
   deleteCreator,
   type PublicCreator,
 } from "./creator.service.js";
-import { creatorEmail, httpsUrl } from "../../utils/validation.js";
-import { setTipMessageHidden } from "./messages.service.js";
+import {
+  creatorEmail,
+  httpsUrl,
+  validateSlugParam,
+} from "../../utils/validation.js";
 
 const RenameSlugBody = z.object({
   slug: z.string().min(3).max(32),
@@ -44,10 +47,12 @@ const ClaimBody = z.object({
 });
 
 const UpdateProfileBody = z.object({
-  displayName: z.string().max(80).optional(),
-  bio: z.string().max(300).optional(),
-  avatarUrl: httpsUrl("Avatar URL").optional(),
-  // Nullable so the field can be cleared; omitting it leaves it unchanged.
+  // Nullable so each field can be cleared; omitting a key leaves it
+  // unchanged. displayName, bio and avatarUrl also treat an empty or
+  // whitespace-only string as a clear — see nullableText/nullableHttpsUrl.
+  displayName: nullableText(80, "Display name").optional(),
+  bio: nullableText(300, "Bio").optional(),
+  avatarUrl: nullableHttpsUrl("Avatar URL").optional(),
   email: creatorEmail.nullable().optional(),
 });
 
@@ -62,7 +67,9 @@ const MessageVisibilityBody = z.object({
 export const creatorRoutes: FastifyPluginAsync = async (app) => {
   // ── GET /:slug — public ────────────────────────────────────────────────────
   app.get("/:slug", async (request, reply) => {
-    const { slug } = request.params as { slug: string };
+    const slug = validateSlugParam(request.params, reply);
+    if (slug === null) return;
+
     const creator: PublicCreator = await getCreatorBySlug(slug);
     return reply.send({ creator });
   });
