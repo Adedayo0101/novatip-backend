@@ -24,6 +24,9 @@ export async function buildServer(): Promise<FastifyInstance> {
 
   const server = Fastify({
     logger: buildLoggerOptions(isProduction),
+    trustProxy: config.trustProxy > 0 ? config.trustProxy : false,
+    requestTimeout: config.requestTimeoutMs,
+    connectionTimeout: config.connectionTimeoutMs,
   });
 
   // ── Security plugins ──────────────────────────────────────────────────────

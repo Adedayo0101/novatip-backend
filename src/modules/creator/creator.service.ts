@@ -529,5 +529,11 @@ export async function isSlugAvailable(
   const existing = await db.creator.findUnique({ where: { slug } });
   if (existing) return false;
   const hold = await activeSlugHold(slug);
-  return !hold || hold.previousOwnerId === viewerId;
+  if (hold && hold.previousOwnerId !== viewerId) return false;
+
+  const jarId = resolveJarId(slug);
+  const jarOwner = await db.creator.findUnique({ where: { jarId } });
+  if (jarOwner && jarOwner.id !== viewerId) return false;
+
+  return true;
 }

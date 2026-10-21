@@ -72,7 +72,8 @@ const ChallengeBody = z.object({
 
 const VerifyBody = z.object({
   walletAddress: z.string().min(56).max(56),
-  signatureHex: z.string().length(128), // 64-byte sig → 128 hex chars
+  message: z.string(),
+  signatureHex: z.string().length(128),
 });
 
 export const authRoutes: FastifyPluginAsync = async (app) => {
@@ -91,8 +92,9 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
         return reply.status(400).send({ error: body.error.flatten() });
       }
 
-      const nonce = await generateChallenge(body.data.walletAddress);
-      return reply.send({ nonce });
+      const domain = new URL(config.appBaseUrl).host;
+      const challenge = await generateChallenge(body.data.walletAddress, domain);
+      return reply.send(challenge);
     },
   );
 
@@ -105,6 +107,7 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
 
     const { jwt, isNewUser } = await verifyChallenge(
       body.data.walletAddress,
+      body.data.message,
       body.data.signatureHex,
       (payload) => app.jwt.sign(payload),
     );
