@@ -2,6 +2,7 @@
  * notifications.routes.ts
  *
  * GET /api/v1/notifications - creator notification feed (auth)
+ * POST /api/v1/notifications/read - mark notifications as read (auth)
  * GET  /api/v1/notifications/preferences — read channel flags (auth required)
  * PATCH /api/v1/notifications/preferences — switch either channel (auth required)
  *
@@ -16,7 +17,13 @@ import {
   DEFAULT_NOTIFICATION_PAGE_SIZE,
   MAX_NOTIFICATION_PAGE_SIZE,
   listNotifications,
+  markNotificationsRead,
+  markAllNotificationsRead,
 } from "./notifications.service.js";
+import {
+  getNotificationPreferences,
+  updateNotificationPreferences,
+} from "./preferences.service.js";
 
 export const NotificationQuery = z.object({
   limit: z.coerce
@@ -26,28 +33,17 @@ export const NotificationQuery = z.object({
     .max(MAX_NOTIFICATION_PAGE_SIZE)
     .default(DEFAULT_NOTIFICATION_PAGE_SIZE),
   offset: z.coerce.number().int().min(0).default(0),
+  unread: z
+    .enum(["true", "false"])
+    .transform((val) => val === "true")
+    .optional(),
+  cursor: z.string().min(1).optional(),
 });
 
-export const notificationsRoutes: FastifyPluginAsync = async (app) => {
-  app.addHook("onRequest", app.authenticate);
-
-  app.get("/", async (request, reply) => {
-    const query = NotificationQuery.safeParse(request.query);
-    if (!query.success) {
-      return reply.status(400).send({ error: query.error.flatten() });
-    }
-
-    const { user } = request;
-    const notifications = await listNotifications(
-      user.sub,
-      query.data.limit,
-      query.data.offset,
-    );
-
-    return reply.send({ notifications });
-  getNotificationPreferences,
-  updateNotificationPreferences,
-} from "./preferences.service.js";
+const MarkReadBody = z.object({
+  ids: z.array(z.string()).optional(),
+  all: z.boolean().optional(),
+});
 
 /**
  * The body mirrors the response envelope, so one shape describes both
@@ -66,6 +62,49 @@ const PreferencesBody = z.object({
 export const notificationRoutes: FastifyPluginAsync = async (app) => {
   // Every route here reads or writes the signed-in creator's own settings.
   app.addHook("onRequest", app.authenticate);
+
+  // ── GET / ──────────────────────────────────────────────────────────────────
+  app.get("/", async (request, reply) => {
+    const query = NotificationQuery.safeParse(request.query);
+    if (!query.success) {
+      return reply.status(400).send({ error: query.error.flatten() });
+    }
+
+    const { user } = request;
+    const result = await listNotifications(
+      user.sub,
+      query.data.limit,
+      query.data.offset,
+      query.data.unread ?? false,
+      query.data.cursor ?? null,
+    );
+
+    return reply.send(result);
+  });
+
+  // ── POST /read ─────────────────────────────────────────────────────────────
+  app.post("/read", async (request, reply) => {
+    const body = MarkReadBody.safeParse(request.body);
+    if (!body.success) {
+      return reply.status(400).send({ error: body.error.flatten() });
+    }
+
+    const { user } = request;
+
+    if (body.data.all) {
+      const count = await markAllNotificationsRead(user.sub);
+      return reply.send({ marked: count });
+    }
+
+    if (body.data.ids && body.data.ids.length > 0) {
+      const count = await markNotificationsRead(user.sub, body.data.ids);
+      return reply.send({ marked: count });
+    }
+
+    return reply.status(400).send({
+      error: "Either 'ids' array or 'all' flag must be provided",
+    });
+  });
 
   // ── GET /preferences ──────────────────────────────────────────────────────
   app.get("/preferences", async (request, reply) => {
