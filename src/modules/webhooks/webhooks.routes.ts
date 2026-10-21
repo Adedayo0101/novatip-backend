@@ -144,7 +144,12 @@ export const webhookRoutes: FastifyPluginAsync = async (app) => {
 
     // Missing and not-yours are the same answer — see setWebhookEnabled.
     if (!webhook) {
-      return reply.status(404).send({ error: "Webhook not found" });
+      return reply.status(404).send({
+        error: {
+          code: "WEBHOOK_NOT_FOUND",
+          message: "Webhook not found",
+        },
+      });
     }
 
     return reply.send({ webhook });
@@ -169,7 +174,12 @@ export const webhookRoutes: FastifyPluginAsync = async (app) => {
     // null means the caller owns no webhook with that id. A webhook that
     // simply has not fired yet returns an empty array, not a 404.
     if (deliveries === null) {
-      return reply.status(404).send({ error: "Webhook not found" });
+      return reply.status(404).send({
+        error: {
+          code: "WEBHOOK_NOT_FOUND",
+          message: "Webhook not found",
+        },
+      });
     }
 
     return reply.send({ deliveries });
@@ -191,7 +201,12 @@ export const webhookRoutes: FastifyPluginAsync = async (app) => {
       const delivery = await sendTestPing(user.sub, id);
 
       if (delivery === null) {
-        return reply.status(404).send({ error: "Webhook not found" });
+        return reply.status(404).send({
+          error: {
+            code: "WEBHOOK_NOT_FOUND",
+            message: "Webhook not found",
+          },
+        });
       }
 
       // 200 even when the receiver rejected the ping. The request to *this*
@@ -221,7 +236,12 @@ export const webhookRoutes: FastifyPluginAsync = async (app) => {
     );
 
     if (!rotated) {
-      return reply.status(404).send({ error: "Webhook not found" });
+      return reply.status(404).send({
+        error: {
+          code: "WEBHOOK_NOT_FOUND",
+          message: "Webhook not found",
+        },
+      });
     }
 
     // Returned once, as at registration — there is no route that reads a
@@ -235,7 +255,12 @@ export const webhookRoutes: FastifyPluginAsync = async (app) => {
     const { id } = request.params as { id: string };
     const deleted = await deleteWebhook(user.sub, id);
     if (!deleted) {
-      return reply.status(404).send({ error: "Webhook not found" });
+      return reply.status(404).send({
+        error: {
+          code: "WEBHOOK_NOT_FOUND",
+          message: "Webhook not found",
+        },
+      });
     }
     return reply.status(204).send();
   });

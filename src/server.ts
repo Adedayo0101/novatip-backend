@@ -130,16 +130,27 @@ export async function buildServer(
     { prefix: "/api/v1" },
   );
 
+  server.setNotFoundHandler((request, reply) => {
+    reply.status(404).send({
+      error: {
+        code: "NOT_FOUND",
+        message: `Route ${request.method} ${request.url} not found`,
+      },
+    });
+  });
+
   // ── Global error handler ──────────────────────────────────────────────────
   server.setErrorHandler((error, request, reply) => {
     server.log.error({ err: error, url: request.url }, "Unhandled error");
 
     const statusCode = error.statusCode ?? 500;
+    const isServerError = statusCode >= 500;
+    
     reply.status(statusCode).send({
       error: {
-        code: error.code ?? "INTERNAL_SERVER_ERROR",
+        code: isProduction && isServerError ? "INTERNAL_SERVER_ERROR" : (error.code ?? "INTERNAL_SERVER_ERROR"),
         message:
-          config.nodeEnv === "production" && statusCode === 500
+          isProduction && isServerError
             ? "An unexpected error occurred."
             : error.message,
       },
