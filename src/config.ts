@@ -73,6 +73,33 @@ function optionalList(key: string, fallback: string[]): string[] {
     .filter((entry) => entry !== "");
 }
 
+/**
+ * Reads an integer setting from its prefixed name only. A legacy,
+ * unprefixed name (TIMEOUT_MS, MAX_BODY_SIZE, MAX_PAYLOAD_SIZE) used to be
+ * read as a silent fallback — those names are generic enough to be common
+ * in shared environments, so a platform setting TIMEOUT_MS for its own
+ * purposes would silently retune webhook delivery, and a non-numeric value
+ * there would fail boot over a variable the operator never meant for
+ * Novatip. The legacy name still works, but logs a warning naming its
+ * replacement instead of taking effect invisibly.
+ */
+function optionalIntDeprecatedFallback(
+  key: string,
+  legacyKey: string,
+  fallback: number,
+  min?: number,
+): number {
+  if (process.env[key] !== undefined) return optionalInt(key, fallback, min);
+  if (process.env[legacyKey] !== undefined) {
+    // eslint-disable-next-line no-console -- boot-time warning: config.ts loads before the pino logger exists.
+    console.warn(
+      `Env var ${legacyKey} is deprecated — set ${key} instead. Reading ${legacyKey} for now.`,
+    );
+    return optionalInt(legacyKey, fallback, min);
+  }
+  return fallback;
+}
+
 function optionalBoolean(key: string, fallback: boolean): boolean {
   const raw = process.env[key];
   if (raw === undefined) return fallback;
@@ -156,8 +183,6 @@ export const config = {
      * false-positive warnings.
      */
     rpcTimeoutMs: optionalInt("INDEXER_RPC_TIMEOUT_MS", 5_000, 1),
-    indexerPollIntervalMs: optionalInt("INDEXER_POLL_INTERVAL_MS", 6_000, 1),
-    indexerPollLimit: optionalInt("INDEXER_POLL_LIMIT", 200, 1),
   },
 
   indexer: {
@@ -192,9 +217,10 @@ export const config = {
      * endpoints reasonable time to respond without tying up indexer dispatch
      * workers or socket pools indefinitely.
      */
-    timeoutMs: optionalInt(
+    timeoutMs: optionalIntDeprecatedFallback(
       "WEBHOOK_TIMEOUT_MS",
-      optionalInt("TIMEOUT_MS", 5_000),
+      "TIMEOUT_MS",
+      5_000,
     ),
 
     /**
@@ -203,9 +229,10 @@ export const config = {
      * failures without letting misbehaved endpoints return megabytes of junk to
      * bloat the database.
      */
-    maxBodySize: optionalInt(
+    maxBodySize: optionalIntDeprecatedFallback(
       "WEBHOOK_MAX_BODY_SIZE",
-      optionalInt("MAX_BODY_SIZE", 1_024),
+      "MAX_BODY_SIZE",
+      1_024,
     ),
 
     /**
@@ -214,9 +241,10 @@ export const config = {
      * while trimming oversized variable fields (e.g. long messages) to prevent
      * historical delivery logs from ballooning storage.
      */
-    maxPayloadSize: optionalInt(
+    maxPayloadSize: optionalIntDeprecatedFallback(
       "WEBHOOK_MAX_PAYLOAD_SIZE",
-      optionalInt("MAX_PAYLOAD_SIZE", 2_048),
+      "MAX_PAYLOAD_SIZE",
+      2_048,
     ),
 
     /**

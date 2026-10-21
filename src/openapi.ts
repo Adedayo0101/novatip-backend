@@ -130,6 +130,23 @@ const requestBody = (bodySchema: object, required = true) => ({
   content: { "application/json": { schema: bodySchema } },
 });
 
+/**
+ * Routes that intentionally share a handler with a documented path and so
+ * have no spec entry of their own — analytics.routes.ts registers five
+ * extra aliases for the CSV export under the one handler GET /export
+ * documents. Each key is the alias's path (relative to the API prefix,
+ * matching the keys of openApiSpecification.paths below); the value is the
+ * documented path that describes it. A route-coverage test treats a method
+ * on one of these paths as satisfied without a spec entry of its own.
+ */
+export const documentedRouteAliases: Record<string, string> = {
+  "/analytics/csv": "/analytics/export",
+  "/analytics/recent.csv": "/analytics/export",
+  "/analytics/export.csv": "/analytics/export",
+  "/analytics/tips.csv": "/analytics/export",
+  "/analytics/history.csv": "/analytics/export",
+};
+
 export const openApiSpecification = {
   openapi: "3.0.3",
   info: {
@@ -183,6 +200,15 @@ export const openApiSpecification = {
         success: json(
           "Persisted cursor and latest known chain ledger.",
           schema("IndexerStatusResponse"),
+        ),
+      }),
+    },
+    "/health/version": {
+      get: operation({
+        summary: "Build and version metadata",
+        success: json(
+          "Package version, build commit, and configured Stellar network.",
+          schema("HealthVersionResponse"),
         ),
       }),
     },
@@ -414,6 +440,18 @@ export const openApiSpecification = {
         },
       }),
     },
+    "/analytics/export": {
+      get: operation({
+        summary: "Download the authenticated creator's tip history as CSV",
+        description:
+          "Streams every tip for the authenticated creator as a CSV attachment. Also reachable as /analytics/csv, /analytics/recent.csv, /analytics/export.csv, /analytics/tips.csv and /analytics/history.csv — documented aliases of this same endpoint (see documentedRouteAliases in openapi.ts).",
+        success: {
+          description: "CSV file of the creator's tip history.",
+          content: { "text/csv": { schema: { type: "string" } } },
+        },
+        secured: true,
+      }),
+    },
     "/public/{slug}/recent": {
       get: operation({
         summary: "Get the public supporter feed",
@@ -432,6 +470,48 @@ export const openApiSpecification = {
           "400": validationError,
           "404": notFound,
         },
+      }),
+    },
+    "/notifications": {
+      get: operation({
+        summary: "Get the authenticated creator's notification feed",
+        success: json(
+          "Page of notifications, newest first.",
+          schema("NotificationListResponse"),
+        ),
+        parameters: [
+          queryParameter("limit", "Page size (1–100, default 20).", {
+            type: "integer",
+            minimum: 1,
+            maximum: 100,
+            default: 20,
+          }),
+          paginationParameters[1]!,
+        ],
+        secured: true,
+        extraResponses: { "400": validationError },
+      }),
+    },
+    "/notifications/preferences": {
+      get: operation({
+        summary: "Get the authenticated creator's notification preferences",
+        success: json(
+          "The creator's channel preferences.",
+          schema("NotificationPreferencesResponse"),
+        ),
+        secured: true,
+      }),
+      patch: operation({
+        summary: "Update the authenticated creator's notification preferences",
+        success: json(
+          "The updated channel preferences.",
+          schema("NotificationPreferencesResponse"),
+        ),
+        requestBody: requestBody(
+          schema("UpdateNotificationPreferencesRequest"),
+        ),
+        secured: true,
+        extraResponses: { "400": validationError },
       }),
     },
     "/webhooks": {
@@ -1099,6 +1179,73 @@ export const openApiSpecification = {
           attemptedAt: { type: "string", format: "date-time" },
         },
         required: ["id", "statusCode", "success", "response", "attemptedAt"],
+      },
+      HealthVersionResponse: {
+        type: "object",
+        properties: {
+          version: { type: "string" },
+          commit: { type: "string" },
+          network: { type: "string" },
+        },
+        required: ["version", "commit", "network"],
+      },
+      Notification: {
+        type: "object",
+        properties: {
+          id: { type: "string" },
+          type: { type: "string", enum: ["TIP_RECEIVED", "WEBHOOK_FAILED"] },
+          payload: {
+            nullable: true,
+            oneOf: [
+              { type: "object", additionalProperties: true },
+              { type: "array", items: {} },
+            ],
+          },
+          sent: { type: "boolean" },
+          sentAt: { type: "string", format: "date-time", nullable: true },
+          createdAt: { type: "string", format: "date-time" },
+        },
+        required: [
+          "id",
+          "type",
+          "payload",
+          "sent",
+          "sentAt",
+          "createdAt",
+        ],
+      },
+      NotificationListResponse: {
+        type: "object",
+        properties: {
+          notifications: { type: "array", items: schema("Notification") },
+        },
+        required: ["notifications"],
+      },
+      NotificationPreferences: {
+        type: "object",
+        properties: {
+          emailEnabled: { type: "boolean" },
+          webhookEnabled: { type: "boolean" },
+        },
+        required: ["emailEnabled", "webhookEnabled"],
+      },
+      NotificationPreferencesResponse: {
+        type: "object",
+        properties: { preferences: schema("NotificationPreferences") },
+        required: ["preferences"],
+      },
+      UpdateNotificationPreferencesRequest: {
+        type: "object",
+        properties: {
+          preferences: {
+            type: "object",
+            properties: {
+              emailEnabled: { type: "boolean" },
+              webhookEnabled: { type: "boolean" },
+            },
+          },
+        },
+        required: ["preferences"],
       },
     },
   },
