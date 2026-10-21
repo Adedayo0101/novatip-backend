@@ -11,6 +11,7 @@ import { db } from "../../db.js";
 import { config } from "../../config.js";
 import { fetchLatestLedger } from "../../indexer/rpc.js";
 import { readCursor } from "../../indexer/persist.js";
+import { getIndexerPollStatus } from "../../indexer/status.js";
 import { redis } from "../../redis.js";
 import { logger } from "../../utils/logger.js";
 
@@ -38,6 +39,8 @@ export type IndexerStatusReport = {
   cursorLedger: number;
   chainHead: { status: "known"; ledger: number } | { status: "unknown" };
   gap: number | null;
+  lastSuccessfulPollAt: string | null;
+  lastError: string | null;
 };
 
 /**
@@ -47,6 +50,7 @@ export type IndexerStatusReport = {
  */
 export async function getIndexerStatus(): Promise<IndexerStatusReport> {
   const cursorLedger = await readCursor();
+  const pollStatus = getIndexerPollStatus();
   let latestLedger: number;
 
   try {
@@ -60,6 +64,7 @@ export async function getIndexerStatus(): Promise<IndexerStatusReport> {
       cursorLedger,
       chainHead: { status: "unknown" },
       gap: null,
+      ...pollStatus,
     };
   }
 
@@ -67,6 +72,7 @@ export async function getIndexerStatus(): Promise<IndexerStatusReport> {
     cursorLedger,
     chainHead: { status: "known", ledger: latestLedger },
     gap: latestLedger - cursorLedger,
+    ...pollStatus,
   };
 }
 

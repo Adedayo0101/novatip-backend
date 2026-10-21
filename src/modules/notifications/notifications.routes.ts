@@ -40,11 +40,6 @@ export const NotificationQuery = z.object({
   cursor: z.string().min(1).optional(),
 });
 
-const MarkReadBody = z.object({
-  ids: z.array(z.string()).optional(),
-  all: z.boolean().optional(),
-});
-
 /**
  * The body mirrors the response envelope, so one shape describes both
  * directions of the card's traffic. Either flag may be omitted to leave its
@@ -60,7 +55,7 @@ const PreferencesBody = z.object({
 });
 
 export const notificationRoutes: FastifyPluginAsync = async (app) => {
-  // Every route here reads or writes the signed-in creator's own settings.
+  // Every route here reads or writes the signed-in creator's own data.
   app.addHook("onRequest", app.authenticate);
 
   // ── GET / ──────────────────────────────────────────────────────────────────
@@ -71,39 +66,13 @@ export const notificationRoutes: FastifyPluginAsync = async (app) => {
     }
 
     const { user } = request;
-    const result = await listNotifications(
+    const notifications = await listNotifications(
       user.sub,
       query.data.limit,
       query.data.offset,
-      query.data.unread ?? false,
-      query.data.cursor ?? null,
     );
 
-    return reply.send(result);
-  });
-
-  // ── POST /read ─────────────────────────────────────────────────────────────
-  app.post("/read", async (request, reply) => {
-    const body = MarkReadBody.safeParse(request.body);
-    if (!body.success) {
-      return reply.status(400).send({ error: body.error.flatten() });
-    }
-
-    const { user } = request;
-
-    if (body.data.all) {
-      const count = await markAllNotificationsRead(user.sub);
-      return reply.send({ marked: count });
-    }
-
-    if (body.data.ids && body.data.ids.length > 0) {
-      const count = await markNotificationsRead(user.sub, body.data.ids);
-      return reply.send({ marked: count });
-    }
-
-    return reply.status(400).send({
-      error: "Either 'ids' array or 'all' flag must be provided",
-    });
+    return reply.send({ notifications });
   });
 
   // ── GET /preferences ──────────────────────────────────────────────────────
