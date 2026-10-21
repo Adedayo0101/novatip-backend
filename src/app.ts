@@ -15,6 +15,9 @@ import {
   startTipDigestScheduler,
   stopTipDigestScheduler,
 } from "./modules/notifications/email.service.js";
+  startPlaceholderCreatorPruner,
+  stopPlaceholderCreatorPruner,
+} from "./modules/creator/placeholder-retention.js";
 import { migrateWebhookSecrets } from "./modules/webhooks/webhooks.service.js";
 
 await migrateWebhookSecrets();
@@ -23,11 +26,15 @@ const server = await buildServer();
 // Start the Soroban event indexer in the background
 startIndexer().catch((err) => {
   server.log.error(err, "[indexer] fatal startup error");
+  process.exit(1);
 });
 
 // Age out old webhook delivery rows on a schedule
 startDeliveryPruner();
 startTipDigestScheduler();
+
+// Age out abandoned sign-in placeholders on a schedule
+startPlaceholderCreatorPruner();
 
 // Graceful shutdown
 const SHUTDOWN_TIMEOUT_MS = 10_000;
@@ -47,6 +54,7 @@ const shutdown = (): Promise<void> => {
     server.log.info("Shutting down...");
     stopDeliveryPruner();
     stopTipDigestScheduler();
+    stopPlaceholderCreatorPruner();
 
     // Forces the process to exit even if the indexer's current iteration or
     // the server's close hooks hang — a stuck shutdown should not block the

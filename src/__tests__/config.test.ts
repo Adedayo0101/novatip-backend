@@ -7,6 +7,12 @@ const envKeys = [
   "INDEXER_START_LEDGER",
   "NOTIFICATION_RETENTION_DAYS",
   "EMAIL_MAX_PER_CREATOR_PER_HOUR",
+  "WEBHOOK_TIMEOUT_MS",
+  "TIMEOUT_MS",
+  "WEBHOOK_MAX_BODY_SIZE",
+  "MAX_BODY_SIZE",
+  "WEBHOOK_MAX_PAYLOAD_SIZE",
+  "MAX_PAYLOAD_SIZE",
 ] as const;
 const originalEnv = Object.fromEntries(
   envKeys.map((key) => [key, process.env[key]]),
@@ -29,6 +35,12 @@ beforeEach(() => {
   delete process.env["INDEXER_START_LEDGER"];
   delete process.env["NOTIFICATION_RETENTION_DAYS"];
   delete process.env["EMAIL_MAX_PER_CREATOR_PER_HOUR"];
+  delete process.env["WEBHOOK_TIMEOUT_MS"];
+  delete process.env["TIMEOUT_MS"];
+  delete process.env["WEBHOOK_MAX_BODY_SIZE"];
+  delete process.env["MAX_BODY_SIZE"];
+  delete process.env["WEBHOOK_MAX_PAYLOAD_SIZE"];
+  delete process.env["MAX_PAYLOAD_SIZE"];
 });
 
 afterEach(() => {
@@ -96,5 +108,78 @@ describe("config", () => {
     await expect(loadConfig()).resolves.toMatchObject({
       notifications: { emailMaxPerCreatorPerHour: 0 },
     });
+  });
+});
+
+describe("config.webhooks", () => {
+  let warnSpy: jest.SpiedFunction<typeof console.warn>;
+
+  beforeEach(() => {
+    warnSpy = jest.spyOn(console, "warn").mockImplementation(() => undefined);
+  });
+
+  afterEach(() => {
+    warnSpy.mockRestore();
+  });
+
+  it("reads timeoutMs, maxBodySize and maxPayloadSize from their prefixed names", async () => {
+    process.env["WEBHOOK_TIMEOUT_MS"] = "7000";
+    process.env["WEBHOOK_MAX_BODY_SIZE"] = "2048";
+    process.env["WEBHOOK_MAX_PAYLOAD_SIZE"] = "4096";
+
+    await expect(loadConfig()).resolves.toMatchObject({
+      webhooks: {
+        timeoutMs: 7000,
+        maxBodySize: 2048,
+        maxPayloadSize: 4096,
+      },
+    });
+    expect(warnSpy).not.toHaveBeenCalled();
+  });
+
+  it("ignores the unprefixed name once the prefixed one is set", async () => {
+    process.env["WEBHOOK_TIMEOUT_MS"] = "7000";
+    process.env["TIMEOUT_MS"] = "60000";
+
+    await expect(loadConfig()).resolves.toMatchObject({
+      webhooks: { timeoutMs: 7000 },
+    });
+    expect(warnSpy).not.toHaveBeenCalled();
+  });
+
+  it("falls back to the unprefixed name with a startup warning naming the replacement", async () => {
+    process.env["TIMEOUT_MS"] = "60000";
+
+    await expect(loadConfig()).resolves.toMatchObject({
+      webhooks: { timeoutMs: 60000 },
+    });
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining("TIMEOUT_MS"),
+    );
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining("WEBHOOK_TIMEOUT_MS"),
+    );
+  });
+
+  it("falls back to MAX_BODY_SIZE and MAX_PAYLOAD_SIZE the same way", async () => {
+    process.env["MAX_BODY_SIZE"] = "4096";
+    process.env["MAX_PAYLOAD_SIZE"] = "8192";
+
+    await expect(loadConfig()).resolves.toMatchObject({
+      webhooks: { maxBodySize: 4096, maxPayloadSize: 8192 },
+    });
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining("WEBHOOK_MAX_BODY_SIZE"),
+    );
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining("WEBHOOK_MAX_PAYLOAD_SIZE"),
+    );
+  });
+
+  it("uses the default when neither name is set", async () => {
+    await expect(loadConfig()).resolves.toMatchObject({
+      webhooks: { timeoutMs: 5_000, maxBodySize: 1_024, maxPayloadSize: 2_048 },
+    });
+    expect(warnSpy).not.toHaveBeenCalled();
   });
 });

@@ -49,6 +49,15 @@ function isStellarNetwork(value: string): value is StellarNetwork {
 // guessable key.
 const MIN_JWT_SECRET_LENGTH = 32;
 
+function validateJwtExpiresIn(value: string): void {
+  const validPattern = /^\d+[smhdwy]$/;
+  if (!validPattern.test(value)) {
+    throw new Error(
+      `Env var JWT_EXPIRES_IN must be a valid time span (e.g. "7d", "1h", "30m"), got "${value}"`,
+    );
+  }
+}
+
 /**
  * Read a comma-separated list setting, trimming each entry and dropping
  * empty ones (a trailing comma or stray whitespace shouldn't produce a ""
@@ -62,6 +71,33 @@ function optionalList(key: string, fallback: string[]): string[] {
     .split(",")
     .map((entry) => entry.trim())
     .filter((entry) => entry !== "");
+}
+
+/**
+ * Reads an integer setting from its prefixed name only. A legacy,
+ * unprefixed name (TIMEOUT_MS, MAX_BODY_SIZE, MAX_PAYLOAD_SIZE) used to be
+ * read as a silent fallback — those names are generic enough to be common
+ * in shared environments, so a platform setting TIMEOUT_MS for its own
+ * purposes would silently retune webhook delivery, and a non-numeric value
+ * there would fail boot over a variable the operator never meant for
+ * Novatip. The legacy name still works, but logs a warning naming its
+ * replacement instead of taking effect invisibly.
+ */
+function optionalIntDeprecatedFallback(
+  key: string,
+  legacyKey: string,
+  fallback: number,
+  min?: number,
+): number {
+  if (process.env[key] !== undefined) return optionalInt(key, fallback, min);
+  if (process.env[legacyKey] !== undefined) {
+    // eslint-disable-next-line no-console -- boot-time warning: config.ts loads before the pino logger exists.
+    console.warn(
+      `Env var ${legacyKey} is deprecated — set ${key} instead. Reading ${legacyKey} for now.`,
+    );
+    return optionalInt(legacyKey, fallback, min);
+  }
+  return fallback;
 }
 
 function optionalBoolean(key: string, fallback: boolean): boolean {
@@ -97,6 +133,9 @@ if (jwtSecretValue.length < MIN_JWT_SECRET_LENGTH) {
   );
 }
 
+const jwtExpiresIn = optional("JWT_EXPIRES_IN", "7d");
+validateJwtExpiresIn(jwtExpiresIn);
+
 const stellarNetwork = optional("STELLAR_NETWORK", "testnet");
 if (!isStellarNetwork(stellarNetwork)) {
   throw new Error(
@@ -113,6 +152,7 @@ export const config = {
   redisUrl: optional("REDIS_URL", "redis://localhost:6379"),
 
   jwtSecret: jwtSecretValue,
+  jwtExpiresIn,
 
   stellar: {
     network: stellarNetwork,
@@ -143,8 +183,6 @@ export const config = {
      * false-positive warnings.
      */
     rpcTimeoutMs: optionalInt("INDEXER_RPC_TIMEOUT_MS", 5_000, 1),
-    indexerPollIntervalMs: optionalInt("INDEXER_POLL_INTERVAL_MS", 6_000, 1),
-    indexerPollLimit: optionalInt("INDEXER_POLL_LIMIT", 200, 1),
   },
 
   indexer: {
@@ -161,6 +199,13 @@ export const config = {
      * without exceeding Soroban RPC getEvents page limits or overwhelming memory.
      */
     pollLimit: optionalInt("INDEXER_POLL_LIMIT", 200, 1),
+
+    /**
+     * Days to retain unowned tips before pruning. Tips with no creatorId may
+     * belong to another application or have been sent before a jar was claimed.
+     * Defaults to 90 days; 0 disables pruning.
+     */
+    unownedTipRetentionDays: optionalInt("UNOWNED_TIP_RETENTION_DAYS", 90, 0),
   },
 
   webhooks: {
@@ -172,9 +217,10 @@ export const config = {
      * endpoints reasonable time to respond without tying up indexer dispatch
      * workers or socket pools indefinitely.
      */
-    timeoutMs: optionalInt(
+    timeoutMs: optionalIntDeprecatedFallback(
       "WEBHOOK_TIMEOUT_MS",
-      optionalInt("TIMEOUT_MS", 5_000),
+      "TIMEOUT_MS",
+      5_000,
     ),
 
     /**
@@ -183,9 +229,10 @@ export const config = {
      * failures without letting misbehaved endpoints return megabytes of junk to
      * bloat the database.
      */
-    maxBodySize: optionalInt(
+    maxBodySize: optionalIntDeprecatedFallback(
       "WEBHOOK_MAX_BODY_SIZE",
-      optionalInt("MAX_BODY_SIZE", 1_024),
+      "MAX_BODY_SIZE",
+      1_024,
     ),
 
     /**
@@ -194,9 +241,10 @@ export const config = {
      * while trimming oversized variable fields (e.g. long messages) to prevent
      * historical delivery logs from ballooning storage.
      */
-    maxPayloadSize: optionalInt(
+    maxPayloadSize: optionalIntDeprecatedFallback(
       "WEBHOOK_MAX_PAYLOAD_SIZE",
-      optionalInt("MAX_PAYLOAD_SIZE", 2_048),
+      "MAX_PAYLOAD_SIZE",
+      2_048,
     ),
 
     /**
@@ -258,6 +306,33 @@ export const config = {
      * the hold, freeing a slug the moment it is released.
      */
     slugHoldDays: optionalInt("CREATOR_SLUG_HOLD_DAYS", 90, 0),
+
+    /**
+     * Days after which an abandoned sign-in placeholder — a creator still on
+     * its auto-generated user_xxxxxxxx slug, with no tips, webhooks,
+     * notifications or released slugs — becomes eligible for deletion. A
+     * wallet costs nothing to sign in with, and the per-process challenge
+     * rate limit is the only other brake on how many of these accumulate, so
+     * this is what ages the abandoned ones out. 0 disables the job and keeps
+     * every placeholder forever.
+     */
+    placeholderRetentionDays: optionalInt(
+      "PLACEHOLDER_CREATOR_RETENTION_DAYS",
+      30,
+      0,
+    ),
+    /** Rows deleted per statement, so a large backlog never locks the table. */
+    placeholderPruneBatchSize: optionalInt(
+      "PLACEHOLDER_CREATOR_PRUNE_BATCH_SIZE",
+      500,
+      1,
+    ),
+    /** How often the placeholder pruner runs. */
+    placeholderPruneIntervalMinutes: optionalInt(
+      "PLACEHOLDER_CREATOR_PRUNE_INTERVAL_MINUTES",
+      60,
+      1,
+    ),
   },
 
   rateLimits: {
@@ -289,6 +364,12 @@ export const config = {
      * permissive — a single client could exhaust it with QR requests alone.
      */
     qr: optionalInt("QR_RATE_LIMIT", 10),
+
+    /**
+     * Per-user cap on CSV export. Each call streams a creator's entire tip
+     * history through the database in batches of 500.
+     */
+    csvExport: optionalInt("CSV_EXPORT_RATE_LIMIT", 5),
   },
 
   appBaseUrl,
@@ -301,4 +382,23 @@ export const config = {
    * appBaseUrl so an unconfigured deployment keeps today's behaviour.
    */
   corsAllowedOrigins: optionalList("CORS_ALLOWED_ORIGINS", [appBaseUrl]),
+
+  /**
+   * Number of proxy hops to trust (e.g. 1 for a single load balancer).
+   * When > 0, request.ip is read from X-Forwarded-For. Off by default;
+   * enabling without a proxy lets clients spoof their address.
+   */
+  trustProxy: optionalInt("TRUST_PROXY", 0, 0),
+
+  /**
+   * Request timeout in milliseconds. Limits how long the server waits for
+   * a complete request body. Defaults to 10 seconds.
+   */
+  requestTimeoutMs: optionalInt("REQUEST_TIMEOUT_MS", 10_000, 1),
+
+  /**
+   * Connection timeout in milliseconds. Limits idle connection time.
+   * Defaults to 60 seconds.
+   */
+  connectionTimeoutMs: optionalInt("CONNECTION_TIMEOUT_MS", 60_000, 1),
 } as const;

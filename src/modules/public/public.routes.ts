@@ -25,6 +25,7 @@ import {
   PUBLIC_TIPS_DEFAULT_LIMIT,
   PUBLIC_TIPS_MAX_LIMIT,
 } from "../analytics/analytics.service.js";
+import { validateSlugParam } from "../../utils/validation.js";
 
 const RecentQuery = z.object({
   limit: z.coerce
@@ -41,7 +42,8 @@ export const publicRoutes: FastifyPluginAsync = async (app) => {
 
   // ── GET /:slug/recent ──────────────────────────────────────────────────────
   app.get("/:slug/recent", async (request, reply) => {
-    const { slug } = request.params as { slug: string };
+    const slug = validateSlugParam(request.params, reply);
+    if (slug === null) return;
 
     const parsed = RecentQuery.safeParse(request.query);
     if (!parsed.success) {

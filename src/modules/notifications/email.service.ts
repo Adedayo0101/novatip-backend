@@ -68,6 +68,69 @@ function tipEmailContent(
   return {
     subject: `💸 You received $${amount} USDC on Novatip!`,
     text: [
+/**
+ * Send a tip-received email notification to the creator.
+ *
+ * Called from the indexer's per-event path, so it never throws: a notification
+ * failing must not stop a tip being recorded or its webhooks being delivered.
+ */
+export async function sendTipNotification(event: TipEvent): Promise<void> {
+  try {
+    const creator = await db.creator.findUnique({
+      where: { jarId: event.jarId },
+    });
+
+    if (!creator) return;
+
+    const notification = await db.notification.create({
+      data: {
+        creatorId: creator.id,
+        type: "TIP_RECEIVED",
+        payload: {
+          from: event.from,
+          amount: event.amount.toString(),
+          message: event.message,
+          ledger: event.ledger,
+          timestamp: event.timestamp,
+        },
+      },
+    });
+
+    // The feed entry is recorded even when the email channel is unavailable
+    // or disabled. `sentAt` stays null until Resend accepts the message.
+    if (!config.resend.apiKey) return;
+
+    if (!creator.emailEnabled) {
+      emailLogger.debug(
+        { slug: creator.slug },
+        "creator has email notifications switched off — skipping tip notification",
+      );
+      return;
+    }
+
+    if (!creator.email) {
+      emailLogger.debug(
+        { slug: creator.slug },
+        "creator has no email on record — skipping tip notification",
+      );
+      return;
+    }
+
+    const amount = formatUsdc(event.amount, 2);
+    const displayName = creator.displayName ?? creator.slug;
+    const message = event.message ? `"${event.message}"` : "No message left.";
+
+    const safeDisplayName = escapeHtml(displayName);
+    const safeAmount = escapeHtml(amount);
+    const safeMessage = event.message
+      ? `"${escapeHtml(event.message)}"`
+      : "No message left.";
+
+    // Dynamic import so Resend is only loaded when the API key is set
+    const { Resend } = await import("resend");
+    const resend = new Resend(config.resend.apiKey);
+
+    const text = [
       `Hey ${displayName}!`,
       "",
       `Someone just tipped you $${amount} USDC on Novatip.`,
@@ -142,6 +205,9 @@ export async function sendTipNotification(event: TipEvent): Promise<void> {
         createdAt: now,
       },
       select: { id: true },
+    await db.notification.update({
+      where: { id: notification.id },
+      data: { sentAt: new Date() },
     });
 
     if (sentThisWindow >= config.notifications.emailMaxPerCreatorPerHour) {
@@ -167,7 +233,7 @@ export async function sendTipNotification(event: TipEvent): Promise<void> {
       });
     }
   } catch (err) {
-    emailLogger.error({ err }, "failed to send email");
+    emailLogger.error({ err }, "failed to record or send tip notification");
   }
 }
 
