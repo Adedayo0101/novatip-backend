@@ -11,6 +11,10 @@ import {
   startDeliveryPruner,
   stopDeliveryPruner,
 } from "./modules/webhooks/retention.js";
+import {
+  startPlaceholderCreatorPruner,
+  stopPlaceholderCreatorPruner,
+} from "./modules/creator/placeholder-retention.js";
 import { migrateWebhookSecrets } from "./modules/webhooks/webhooks.service.js";
 
 await migrateWebhookSecrets();
@@ -23,6 +27,9 @@ startIndexer().catch((err) => {
 
 // Age out old webhook delivery rows on a schedule
 startDeliveryPruner();
+
+// Age out abandoned sign-in placeholders on a schedule
+startPlaceholderCreatorPruner();
 
 // Graceful shutdown
 const SHUTDOWN_TIMEOUT_MS = 10_000;
@@ -41,6 +48,7 @@ const shutdown = (): Promise<void> => {
   shuttingDown = (async () => {
     server.log.info("Shutting down...");
     stopDeliveryPruner();
+    stopPlaceholderCreatorPruner();
 
     // Forces the process to exit even if the indexer's current iteration or
     // the server's close hooks hang — a stuck shutdown should not block the

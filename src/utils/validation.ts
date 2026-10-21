@@ -44,6 +44,55 @@ export const httpsUrl = (fieldName: string) =>
     );
 
 /**
+ * Trims a string field and, if that leaves it empty, treats it as absent.
+ * Shared by nullableText and nullableHttpsUrl below so "clear this field"
+ * has exactly one meaning everywhere a PATCH body accepts it: omit the key
+ * (leave unchanged), send `null` (clear it), or send `""`/whitespace
+ * (clear it too — a form that merely erased the field shouldn't have to
+ * know to send `null` instead of an empty input).
+ */
+function trimToNull(val: string | null | undefined): string | null | undefined {
+  if (val === undefined || val === null) return val;
+  const trimmed = val.trim();
+  return trimmed === "" ? null : trimmed;
+}
+
+/**
+ * A nullable, clearable text field, trimmed with empty treated as null.
+ *   - Key omitted: schema caller adds `.optional()` — leaves the stored
+ *     value unchanged.
+ *   - `null` or `""`/whitespace: stored as `null`.
+ *   - Otherwise: the trimmed string, at most `maxLength` characters.
+ */
+export const nullableText = (maxLength: number, fieldName: string) =>
+  z
+    .string()
+    .nullable()
+    .transform(trimToNull)
+    .pipe(
+      z.union([
+        z.null(),
+        z
+          .string()
+          .max(maxLength, {
+            message: `${fieldName} must be at most ${maxLength} characters.`,
+          }),
+      ]),
+    );
+
+/**
+ * httpsUrl, but nullable and clearable the same way nullableText is: `null`
+ * or an empty/whitespace string clears the stored value, and anything else
+ * must still pass httpsUrl's https-only check.
+ */
+export const nullableHttpsUrl = (fieldName: string) =>
+  z
+    .string()
+    .nullable()
+    .transform(trimToNull)
+    .pipe(z.union([z.null(), httpsUrl(fieldName)]));
+
+/**
  * A creator's contact email.
  *
  * Trimmed and lowercased before validation so the stored value is canonical —
