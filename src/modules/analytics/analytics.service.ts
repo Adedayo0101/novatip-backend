@@ -336,11 +336,17 @@ export function toRecentTipsPage(
 
 /** CSV quoting follows RFC 4180: strings containing commas, quotes, or line breaks are wrapped in double quotes and inner quotes doubled. */
 function escapeCsvValue(value: string): string {
-  const needsQuotes = /[",\n\r]/.test(value);
-  if (!needsQuotes) {
-    return value;
+  let escaped = value;
+  
+  if (/^[=+\-@\t\r]/.test(value)) {
+    escaped = "'" + value;
   }
-  return `"${value.replace(/"/g, '""')}"`;
+  
+  const needsQuotes = /[",\n\r]/.test(escaped);
+  if (!needsQuotes) {
+    return escaped;
+  }
+  return `"${escaped.replace(/"/g, '""')}"`;
 }
 
 /**

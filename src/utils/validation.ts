@@ -5,6 +5,35 @@
  */
 
 import { z } from "zod";
+import type { FastifyReply } from "fastify";
+
+export const CREATOR_SLUG_REGEX = /^[a-z0-9_-]{3,32}$/;
+
+const SlugParams = z.object({
+  slug: z
+    .string()
+    .regex(
+      CREATOR_SLUG_REGEX,
+      "Slug must be 3–32 lowercase letters, numbers, underscores, or hyphens.",
+    ),
+});
+
+/**
+ * Validate a slug route parameter before any cache or database access.
+ * Returns null after sending the shared 400 response for malformed slugs.
+ */
+export function validateSlugParam(
+  params: unknown,
+  reply: FastifyReply,
+): string | null {
+  const parsed = SlugParams.safeParse(params);
+  if (!parsed.success) {
+    reply.status(400).send({ error: parsed.error.flatten() });
+    return null;
+  }
+
+  return parsed.data.slug;
+}
 
 /**
  * Validates a URL that:

@@ -49,6 +49,15 @@ function isStellarNetwork(value: string): value is StellarNetwork {
 // guessable key.
 const MIN_JWT_SECRET_LENGTH = 32;
 
+function validateJwtExpiresIn(value: string): void {
+  const validPattern = /^\d+[smhdwy]$/;
+  if (!validPattern.test(value)) {
+    throw new Error(
+      `Env var JWT_EXPIRES_IN must be a valid time span (e.g. "7d", "1h", "30m"), got "${value}"`,
+    );
+  }
+}
+
 /**
  * Read a comma-separated list setting, trimming each entry and dropping
  * empty ones (a trailing comma or stray whitespace shouldn't produce a ""
@@ -124,6 +133,9 @@ if (jwtSecretValue.length < MIN_JWT_SECRET_LENGTH) {
   );
 }
 
+const jwtExpiresIn = optional("JWT_EXPIRES_IN", "7d");
+validateJwtExpiresIn(jwtExpiresIn);
+
 const stellarNetwork = optional("STELLAR_NETWORK", "testnet");
 if (!isStellarNetwork(stellarNetwork)) {
   throw new Error(
@@ -140,6 +152,7 @@ export const config = {
   redisUrl: optional("REDIS_URL", "redis://localhost:6379"),
 
   jwtSecret: jwtSecretValue,
+  jwtExpiresIn,
 
   stellar: {
     network: stellarNetwork,
@@ -186,6 +199,13 @@ export const config = {
      * without exceeding Soroban RPC getEvents page limits or overwhelming memory.
      */
     pollLimit: optionalInt("INDEXER_POLL_LIMIT", 200, 1),
+
+    /**
+     * Days to retain unowned tips before pruning. Tips with no creatorId may
+     * belong to another application or have been sent before a jar was claimed.
+     * Defaults to 90 days; 0 disables pruning.
+     */
+    unownedTipRetentionDays: optionalInt("UNOWNED_TIP_RETENTION_DAYS", 90, 0),
   },
 
   webhooks: {
@@ -330,6 +350,12 @@ export const config = {
      * permissive — a single client could exhaust it with QR requests alone.
      */
     qr: optionalInt("QR_RATE_LIMIT", 10),
+
+    /**
+     * Per-user cap on CSV export. Each call streams a creator's entire tip
+     * history through the database in batches of 500.
+     */
+    csvExport: optionalInt("CSV_EXPORT_RATE_LIMIT", 5),
   },
 
   appBaseUrl,

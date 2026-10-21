@@ -14,7 +14,6 @@ import type { FastifyPluginAsync } from "fastify";
 import { getIndexerStatus, getReadiness } from "./health.service.js";
 import { config } from "../../config.js";
 
-
 function getPackageVersion(): string {
   try {
     const pkg = JSON.parse(

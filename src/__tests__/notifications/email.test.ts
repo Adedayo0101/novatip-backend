@@ -49,7 +49,8 @@ const mockDb = {
     findUnique: jest.fn<() => Promise<CreatorRecord | null>>(),
   },
   notification: {
-    create: jest.fn<() => Promise<unknown>>(),
+    create: jest.fn<() => Promise<{ id: string }>>(),
+    update: jest.fn<() => Promise<unknown>>(),
   },
 };
 
@@ -66,6 +67,7 @@ describe("sendTipNotification", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockSend.mockResolvedValue({ error: null });
+    mockDb.notification.create.mockResolvedValue({ id: "notification_1" });
   });
 
   const tipEvent: TipEvent = {
@@ -181,11 +183,18 @@ describe("sendTipNotification", () => {
     const originalKey = config.resend.apiKey;
     try {
       (config.resend as { apiKey?: string | undefined }).apiKey = undefined;
+      mockDb.creator.findUnique.mockResolvedValue({
+        id: "creator_1",
+        slug: "alice",
+        email: "alice@example.com",
+        emailEnabled: true,
+      });
 
       await sendTipNotification(tipEvent);
 
       expect(mockSend).not.toHaveBeenCalled();
-      expect(mockDb.creator.findUnique).not.toHaveBeenCalled();
+      expect(mockDb.notification.create).toHaveBeenCalledTimes(1);
+      expect(mockDb.notification.update).not.toHaveBeenCalled();
     } finally {
       (config.resend as { apiKey?: string | undefined }).apiKey = originalKey;
     }
@@ -197,7 +206,8 @@ describe("sendTipNotification", () => {
     await sendTipNotification(tipEvent);
 
     expect(mockSend).not.toHaveBeenCalled();
-    expect(mockDb.notification.create).not.toHaveBeenCalled();
+    expect(mockDb.notification.create).toHaveBeenCalledTimes(1);
+    expect(mockDb.notification.update).not.toHaveBeenCalled();
   });
 
   it("skips notification when creator has no email on record", async () => {
@@ -212,7 +222,8 @@ describe("sendTipNotification", () => {
     await sendTipNotification(tipEvent);
 
     expect(mockSend).not.toHaveBeenCalled();
-    expect(mockDb.notification.create).not.toHaveBeenCalled();
+    expect(mockDb.notification.create).toHaveBeenCalledTimes(1);
+    expect(mockDb.notification.update).not.toHaveBeenCalled();
   });
 
   it("skips the send when the creator has switched the channel off (emailEnabled false)", async () => {
@@ -228,7 +239,8 @@ describe("sendTipNotification", () => {
     await sendTipNotification(tipEvent);
 
     expect(mockSend).not.toHaveBeenCalled();
-    expect(mockDb.notification.create).not.toHaveBeenCalled();
+    expect(mockDb.notification.create).toHaveBeenCalledTimes(1);
+    expect(mockDb.notification.update).not.toHaveBeenCalled();
   });
 
   it("sends when the creator has the channel on (emailEnabled true)", async () => {
@@ -244,9 +256,13 @@ describe("sendTipNotification", () => {
 
     expect(mockSend).toHaveBeenCalledTimes(1);
     expect(mockDb.notification.create).toHaveBeenCalledTimes(1);
+    expect(mockDb.notification.update).toHaveBeenCalledWith({
+      where: { id: "notification_1" },
+      data: { sentAt: expect.any(Date) },
+    });
   });
 
-  it("writes notification row only after a successful send", async () => {
+  it("records every tip and sets sentAt only after a successful send", async () => {
     mockDb.creator.findUnique.mockResolvedValue({
       id: "creator_1",
       slug: "alice",
@@ -255,7 +271,7 @@ describe("sendTipNotification", () => {
       emailEnabled: true,
     });
 
-    // Successful send writes DB notification row
+    // Successful send marks the existing feed row as sent.
     mockSend.mockResolvedValueOnce({ error: null });
     await sendTipNotification(tipEvent);
     expect(mockDb.notification.create).toHaveBeenCalledTimes(1);
@@ -263,13 +279,21 @@ describe("sendTipNotification", () => {
       data: expect.objectContaining({
         creatorId: "creator_1",
         type: "TIP_RECEIVED",
+        payload: expect.objectContaining({
+          from: tipEvent.from,
+          amount: tipEvent.amount.toString(),
+          ledger: tipEvent.ledger,
+        }),
       }),
     });
+    expect(mockDb.notification.update).toHaveBeenCalledTimes(1);
 
-    // Failed send does NOT write DB notification row
+    // A rejected email leaves a feed row with its default null sentAt.
     mockDb.notification.create.mockClear();
+    mockDb.notification.update.mockClear();
     mockSend.mockResolvedValueOnce({ error: new Error("Resend rate limit") });
     await sendTipNotification(tipEvent);
-    expect(mockDb.notification.create).not.toHaveBeenCalled();
+    expect(mockDb.notification.create).toHaveBeenCalledTimes(1);
+    expect(mockDb.notification.update).not.toHaveBeenCalled();
   });
 });

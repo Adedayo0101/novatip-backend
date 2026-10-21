@@ -97,4 +97,33 @@ describe("OpenAPI route", () => {
       ),
     ).toContain("400");
   });
+
+  it("documents the shared slug format and malformed-slug response", () => {
+    const slugPaths = [
+      "/creators/{slug}",
+      "/resolve/{slug}",
+      "/qr/{slug}",
+      "/qr/{slug}/png",
+      "/public/{slug}/recent",
+    ];
+
+    for (const path of slugPaths) {
+      const operation = openApiSpecification.paths[path]?.get;
+      const slugParameter = operation?.parameters?.find(
+        (parameter) => "name" in parameter && parameter.name === "slug",
+      );
+
+      expect(slugParameter).toMatchObject({
+        name: "slug",
+        in: "path",
+        schema: {
+          type: "string",
+          minLength: 3,
+          maxLength: 32,
+          pattern: "^[a-z0-9_-]{3,32}$",
+        },
+      });
+      expect(operation?.responses).toHaveProperty("400");
+    }
+  });
 });

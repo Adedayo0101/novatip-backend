@@ -99,6 +99,8 @@ model Tip {
   amount      String
   /// Optional supporter message (bounded to the contract's 280-byte limit)
   message     String   @default("") @db.VarChar(280)
+  /// On-chain jar ID, e.g. "@alice". Set for every tip, including unclaimed ones
+  jarId       String?
   creatorId   String?
   creator     Creator? @relation(fields: [creatorId], references: [id], onDelete: SetNull)
   createdAt   DateTime @default(now())
@@ -112,6 +114,7 @@ model Tip {
   /// Supports getTimeSeries' GROUP BY date_trunc("ledgerAt") scoped to a creator,
   /// and getRecentTips/CSV export/public feed's ORDER BY "ledgerAt" DESC scoped to a creator
   @@index([creatorId, ledgerAt])
+  @@index([jarId])
 }
 
 // ── Webhook ───────────────────────────────────────────────────────────────────
