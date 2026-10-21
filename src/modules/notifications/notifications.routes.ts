@@ -2,6 +2,7 @@
  * notifications.routes.ts
  *
  * GET /api/v1/notifications - creator notification feed (auth)
+ * POST /api/v1/notifications/read - mark notifications as read (auth)
  * GET  /api/v1/notifications/preferences — read channel flags (auth required)
  * PATCH /api/v1/notifications/preferences — switch either channel (auth required)
  *
@@ -16,6 +17,8 @@ import {
   DEFAULT_NOTIFICATION_PAGE_SIZE,
   MAX_NOTIFICATION_PAGE_SIZE,
   listNotifications,
+  markNotificationsRead,
+  markAllNotificationsRead,
 } from "./notifications.service.js";
 import {
   getNotificationPreferences,
@@ -30,6 +33,11 @@ export const NotificationQuery = z.object({
     .max(MAX_NOTIFICATION_PAGE_SIZE)
     .default(DEFAULT_NOTIFICATION_PAGE_SIZE),
   offset: z.coerce.number().int().min(0).default(0),
+  unread: z
+    .enum(["true", "false"])
+    .transform((val) => val === "true")
+    .optional(),
+  cursor: z.string().min(1).optional(),
 });
 
 /**
