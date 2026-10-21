@@ -232,7 +232,9 @@ GET /analytics/top-supporters- Ranked supporters ?limit=10 (JWT)
 GET /analytics/recent - Live tip feed ?limit=20&cursor=<opaque> (JWT)
 GET /analytics/export - CSV export of the creator's tip history (JWT)
 GET /analytics/collaborators - Per-recipient earnings breakdown (JWT)
-GET /notifications - Recent notifications ?limit=20&offset=0 (JWT)
+GET /notifications - Recent notifications ?limit=20&offset=0&unread=true&cursor=<opaque> (JWT)
+POST /notifications/read - Mark notifications as read (JWT)
+PATCH /creators/tips/:tipId/message - Hide or unhide a tip message (JWT)
 
 ### Error responses
 
@@ -454,6 +456,12 @@ ceiling is a 400 naming it rather than a silently shortened page. A webhook that
 has not fired yet returns an empty array; one belonging to another creator
 returns 404.
 
+Filtering by success status: `?success=true` returns only successful deliveries
+(2xx responses), and `?success=false` returns only failures. Omit the parameter
+to see all attempts. An invalid value (not "true" or "false") returns 400.
+This lets creators quickly find failures without paging through pages of
+successes on a healthy webhook.
+
 Note that history is not kept forever — see Webhook Delivery Retention for the
 windows, which default to 30 days for successes and 90 for failures.
 
@@ -531,6 +539,50 @@ nothing at all while `webhookEnabled` is false. The pre-existing gates stay
 underneath — a paused per-webhook `enabled` row still applies when the
 channel is on, and email still needs an address on record
 (PATCH /creators/me).
+
+### Notification read state
+
+GET /notifications supports read state tracking with these query parameters:
+- `?unread=true` - Returns only unread notifications
+- `?cursor=<opaque>` - Cursor-based pagination (see below)
+- `?limit=` and `?offset=` - Continue to work for backward compatibility
+
+The response includes:
+- `notifications` - Array of notification records, each with `read` and `readAt` fields
+- `unreadCount` - Total count of unread notifications for badge display
+- `nextCursor` - Opaque cursor for the next page (null on the last page)
+
+POST /notifications/read marks notifications as read. It accepts:
+- `{ "ids": ["clz...", "cma..."] }` - Mark specific notifications
+- `{ "all": true }` - Mark all of the creator's notifications as read
+
+Only the caller's own notifications are touched; another creator's ids are
+silently ignored rather than rejected. The response is `{ "marked": <count> }`,
+the number of notifications that were updated (already-read rows are not
+counted).
+
+Cursor paging avoids the offset-shift problem: when notifications arrive at the
+head mid-scroll, offset pages shift and a row is seen twice or skipped. The
+cursor names the row the previous page ended on, so new arrivals never displace
+boundaries already handed out. Pass `nextCursor` from one response back as
+`?cursor=` to get the following page.
+
+### Hiding supporter messages
+
+PATCH /creators/tips/:tipId/message hides or unhides a supporter's message from
+the public feed. A creator can hide spam, abuse, or unwanted links without
+affecting the on-chain record. The route takes `{ "hidden": true | false }` and
+returns `{ "tip": { "id", "messageHidden" } }`.
+
+A tip not belonging to the caller returns 404, same as a tip that does not
+exist. The hidden message still appears in the creator's own
+GET /analytics/recent feed, flagged with `"messageHidden": true`, so they can
+review what was hidden. The public GET /public/:slug/recent feed returns an
+empty message for hidden tips instead of the original text.
+
+The public feed cache is invalidated when a message is hidden or unhidden,
+and the 15-second TTL ensures hidden messages disappear promptly from the
+public view without stale cached pages persisting.
 
 ## Indexer
 
