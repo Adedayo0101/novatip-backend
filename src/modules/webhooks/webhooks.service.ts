@@ -544,6 +544,7 @@ export async function listWebhookDeliveries(
   webhookId: string,
   limit = DEFAULT_DELIVERY_PAGE_SIZE,
   offset = 0,
+  successFilter?: boolean,
 ) {
   const owned = await db.webhook.findFirst({
     where: { id: webhookId, creatorId },
@@ -552,8 +553,12 @@ export async function listWebhookDeliveries(
 
   if (!owned) return null;
 
+  const where = successFilter !== undefined
+    ? { webhookId, success: successFilter }
+    : { webhookId };
+
   return db.webhookDelivery.findMany({
-    where: { webhookId },
+    where,
     orderBy: { attemptedAt: "desc" },
     take: Math.min(limit, MAX_DELIVERY_PAGE_SIZE),
     skip: offset,

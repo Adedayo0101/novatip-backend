@@ -7,6 +7,7 @@
  * PATCH /api/v1/creators/me            — update profile (auth required)
  * PATCH /api/v1/creators/me/splits     — update on-chain splits record (auth required)
  * PATCH /api/v1/creators/me/slug       — rename slug (auth required)
+ * PATCH /api/v1/creators/tips/:tipId/message — hide or unhide a tip message (auth required)
  * DELETE /api/v1/creators/me           — delete the authenticated creator profile (auth required)
  */
 
@@ -22,7 +23,11 @@ import {
   deleteCreator,
   type PublicCreator,
 } from "./creator.service.js";
-import { creatorEmail, httpsUrl } from "../../utils/validation.js";
+import {
+  creatorEmail,
+  httpsUrl,
+  validateSlugParam,
+} from "../../utils/validation.js";
 
 const RenameSlugBody = z.object({
   slug: z.string().min(3).max(32),
@@ -42,10 +47,12 @@ const ClaimBody = z.object({
 });
 
 const UpdateProfileBody = z.object({
-  displayName: z.string().max(80).optional(),
-  bio: z.string().max(300).optional(),
-  avatarUrl: httpsUrl("Avatar URL").optional(),
-  // Nullable so the field can be cleared; omitting it leaves it unchanged.
+  // Nullable so each field can be cleared; omitting a key leaves it
+  // unchanged. displayName, bio and avatarUrl also treat an empty or
+  // whitespace-only string as a clear — see nullableText/nullableHttpsUrl.
+  displayName: nullableText(80, "Display name").optional(),
+  bio: nullableText(300, "Bio").optional(),
+  avatarUrl: nullableHttpsUrl("Avatar URL").optional(),
   email: creatorEmail.nullable().optional(),
 });
 
@@ -53,10 +60,16 @@ const UpdateSplitsBody = z.object({
   splits: z.array(z.object({ to: z.string(), bps: z.number().int() })).min(1),
 });
 
+const MessageVisibilityBody = z.object({
+  hidden: z.boolean(),
+});
+
 export const creatorRoutes: FastifyPluginAsync = async (app) => {
   // ── GET /:slug — public ────────────────────────────────────────────────────
   app.get("/:slug", async (request, reply) => {
-    const { slug } = request.params as { slug: string };
+    const slug = validateSlugParam(request.params, reply);
+    if (slug === null) return;
+
     const creator: PublicCreator = await getCreatorBySlug(slug);
     return reply.send({ creator });
   });
@@ -160,6 +173,28 @@ export const creatorRoutes: FastifyPluginAsync = async (app) => {
     async (request, reply) => {
       await deleteCreator(request.user.sub);
       return reply.status(204).send();
+    },
+  );
+
+  // ── PATCH /tips/:tipId/message — auth required ────────────────────────────
+  app.patch(
+    "/tips/:tipId/message",
+    { onRequest: [app.authenticate] },
+    async (request, reply) => {
+      const body = MessageVisibilityBody.safeParse(request.body);
+      if (!body.success) {
+        return reply.status(400).send({ error: body.error.flatten() });
+      }
+
+      const { tipId } = request.params as { tipId: string };
+      const { user } = request;
+      const tip = await setTipMessageHidden(user.sub, tipId, body.data.hidden);
+
+      if (!tip) {
+        return reply.status(404).send({ error: "Tip not found" });
+      }
+
+      return reply.send({ tip });
     },
   );
 };

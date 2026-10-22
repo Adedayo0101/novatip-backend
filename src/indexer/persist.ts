@@ -20,6 +20,7 @@ export const INDEXER_CURSOR_ID = 1;
 /**
  * Persist a single TipEvent.
  * Uses upsert on txHash so re-runs are idempotent.
+ * Returns true when the tip was newly created, false when it already existed.
  *
  * @param event     - Decoded TipEvent from the SDK event parser
  * @param txHash    - Soroban transaction hash (used as idempotency key)
@@ -27,24 +28,14 @@ export const INDEXER_CURSOR_ID = 1;
 export async function persistTip(
   event: TipEvent,
   txHash: string,
-): Promise<void> {
-  // Resolve creator by jarId
+): Promise<boolean> {
   const creator = await db.creator.findUnique({
     where: { jarId: event.jarId },
   });
 
-  if (!creator) {
-    // Jar not registered in our DB — skip (expected if the jar belongs to another application)
-    persistLogger.info(
-      { jarId: event.jarId },
-      "Tip received for unregistered jar; skipping (jar may belong to another application)",
-    );
-    return;
-  }
-
-  await db.tip.upsert({
+  const result = await db.tip.upsert({
     where: { txHash },
-    update: {}, // already persisted — no-op
+    update: {},
     create: {
       txHash,
       ledger: event.ledger,
@@ -52,9 +43,19 @@ export async function persistTip(
       fromAddress: event.from,
       amount: event.amount.toString(),
       message: event.message,
-      creatorId: creator.id,
+      jarId: event.jarId,
+      creatorId: creator?.id ?? null,
     },
   });
+
+  if (!creator) {
+    persistLogger.info(
+      { jarId: event.jarId },
+      "Tip received for unclaimed jar; stored without owner (tip will be attached when jar is claimed)",
+    );
+  }
+
+  return result.createdAt.getTime() === result.ledgerAt.getTime();
 }
 
 /**
@@ -78,4 +79,24 @@ export async function readCursor(): Promise<number> {
     where: { id: INDEXER_CURSOR_ID },
   });
   return cursor?.lastLedger ?? 0;
+}
+
+/**
+ * Prune unowned tips older than the configured number of days.
+ * Tips with no creatorId may belong to another application, so they are not
+ * kept indefinitely.
+ */
+export async function pruneUnownedTips(olderThanDays: number): Promise<number> {
+  if (olderThanDays <= 0) return 0;
+
+  const cutoff = new Date(Date.now() - olderThanDays * 86_400_000);
+
+  const result = await db.tip.deleteMany({
+    where: {
+      creatorId: null,
+      ledgerAt: { lt: cutoff },
+    },
+  });
+
+  return result.count;
 }
