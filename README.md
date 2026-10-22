@@ -250,7 +250,9 @@ GET /analytics/top-supporters- Ranked supporters ?limit=10 (JWT)
 GET /analytics/recent - Live tip feed ?limit=20&cursor=<opaque> (JWT)
 GET /analytics/export - CSV export of the creator's tip history (JWT)
 GET /analytics/collaborators - Per-recipient earnings breakdown (JWT)
-GET /notifications - Recent notifications ?limit=20&offset=0 (JWT)
+GET /notifications - Recent notifications ?limit=20&offset=0&unread=true&cursor=<opaque> (JWT)
+POST /notifications/read - Mark notifications as read (JWT)
+PATCH /creators/tips/:tipId/message - Hide or unhide a tip message (JWT)
 
 ### Error responses
 
@@ -471,6 +473,12 @@ Paging is `?limit=` (1–100, default 20) and `?offset=`. A limit above the
 ceiling is a 400 naming it rather than a silently shortened page. A webhook that
 has not fired yet returns an empty array; one belonging to another creator
 returns 404.
+
+Filtering by success status: `?success=true` returns only successful deliveries
+(2xx responses), and `?success=false` returns only failures. Omit the parameter
+to see all attempts. An invalid value (not "true" or "false") returns 400.
+This lets creators quickly find failures without paging through pages of
+successes on a healthy webhook.
 
 Note that history is not kept forever — see Webhook Delivery Retention for the
 windows, which default to 30 days for successes and 90 for failures.
