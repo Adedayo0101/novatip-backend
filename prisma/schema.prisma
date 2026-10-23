@@ -175,7 +175,10 @@ model Notification {
   readAt    DateTime?
   createdAt DateTime @default(now())
 
-  @@index([creatorId])
+  /// Serves GET /notifications: creator-scoped newest-first paging by
+  /// createdAt and id. The creatorId prefix also replaces the former
+  /// single-column index.
+  @@index([creatorId, createdAt, id])
 }
 
 enum NotificationType {

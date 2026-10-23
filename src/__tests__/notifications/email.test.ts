@@ -16,6 +16,7 @@ process.env["JWT_SECRET"] ??= "test-secret-not-used-for-signing";
 process.env["TIP_SPLITTER_CONTRACT_ID"] ??= `C${"A".repeat(55)}`;
 process.env["RESEND_API_KEY"] = "re_test_key";
 process.env["APP_BASE_URL"] = "https://app.novatip.xyz";
+process.env["EMAIL_MAX_PER_CREATOR_PER_HOUR"] = "2";
 
 type SendPayload = {
   from: string;
@@ -33,13 +34,19 @@ type CreatorRecord = {
   emailEnabled: boolean;
 };
 
+type NotificationRecord = {
+  id: string;
+  creatorId: string;
+  createdAt: Date;
+  payload: unknown;
+};
+
 const mockSend =
   jest.fn<(payload: SendPayload) => Promise<{ error: null | Error }>>();
 
 jest.unstable_mockModule("resend", () => ({
   Resend: jest.fn().mockImplementation(() => ({
-    emails: {
-      send: mockSend,
+    emails: {      send: mockSend,
     },
   })),
 }));
@@ -49,6 +56,11 @@ const mockDb = {
     findUnique: jest.fn<() => Promise<CreatorRecord | null>>(),
   },
   notification: {
+    count: jest.fn<() => Promise<number>>(),
+    create: jest.fn<() => Promise<{ id: string }>>(),
+    update: jest.fn<() => Promise<unknown>>(),
+    findMany: jest.fn<() => Promise<NotificationRecord[]>>(),
+    updateMany: jest.fn<() => Promise<{ count: number }>>(),
     create: jest.fn<() => Promise<{ id: string }>>(),
     update: jest.fn<() => Promise<unknown>>(),
   },
@@ -60,13 +72,18 @@ jest.unstable_mockModule("../../db.js", () => ({
 }));
 
 const { config } = await import("../../config.js");
-const { sendTipNotification } =
+const { sendPendingTipDigests, sendTipNotification } =
   await import("../../modules/notifications/email.service.js");
 
 describe("sendTipNotification", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockSend.mockResolvedValue({ error: null });
+    mockDb.notification.count.mockResolvedValue(0);
+    mockDb.notification.create.mockResolvedValue({ id: "notification_1" });
+    mockDb.notification.update.mockResolvedValue({});
+    mockDb.notification.findMany.mockResolvedValue([]);
+    mockDb.notification.updateMany.mockResolvedValue({ count: 0 });
     mockDb.notification.create.mockResolvedValue({ id: "notification_1" });
   });
 
@@ -262,6 +279,23 @@ describe("sendTipNotification", () => {
     });
   });
 
+  it("sends an individual tip email while below the per-hour cap", async () => {
+    mockDb.creator.findUnique.mockResolvedValue({
+      id: "creator_1",
+      slug: "alice",
+      displayName: "Alice",
+      email: "alice@example.com",
+      emailEnabled: true,
+    });
+    mockDb.notification.count.mockResolvedValue(1);
+
+    await sendTipNotification(tipEvent);
+
+    expect(mockSend).toHaveBeenCalledTimes(1);
+    expect(mockDb.notification.update).toHaveBeenCalledTimes(1);
+  });
+
+  it("records individual notification rows and marks successful sends", async () => {
   it("records every tip and sets sentAt only after a successful send", async () => {
     mockDb.creator.findUnique.mockResolvedValue({
       id: "creator_1",
@@ -285,9 +319,15 @@ describe("sendTipNotification", () => {
           ledger: tipEvent.ledger,
         }),
       }),
+      select: { id: true },
+    });
+    expect(mockDb.notification.update).toHaveBeenCalledWith({
+      where: { id: "notification_1" },
+      data: { sentAt: expect.any(Date) },
     });
     expect(mockDb.notification.update).toHaveBeenCalledTimes(1);
 
+    // A rejected individual send stays pending for the next digest.
     // A rejected email leaves a feed row with its default null sentAt.
     mockDb.notification.create.mockClear();
     mockDb.notification.update.mockClear();
@@ -295,5 +335,69 @@ describe("sendTipNotification", () => {
     await sendTipNotification(tipEvent);
     expect(mockDb.notification.create).toHaveBeenCalledTimes(1);
     expect(mockDb.notification.update).not.toHaveBeenCalled();
+  });
+
+  it("queues a tip without sending an individual email after the cap", async () => {
+    mockDb.creator.findUnique.mockResolvedValue({
+      id: "creator_1",
+      slug: "alice",
+      displayName: "Alice",
+      email: "alice@example.com",
+      emailEnabled: true,
+    });
+    mockDb.notification.count.mockResolvedValue(2);
+
+    await sendTipNotification(tipEvent);
+
+    expect(mockSend).not.toHaveBeenCalled();
+    expect(mockDb.notification.create).toHaveBeenCalledTimes(1);
+    expect(mockDb.notification.update).not.toHaveBeenCalled();
+  });
+
+  it("sends one digest for pending tips in a closed hour", async () => {
+    mockDb.creator.findUnique.mockResolvedValue({
+      id: "creator_1",
+      slug: "alice",
+      displayName: "Alice",
+      email: "alice@example.com",
+      emailEnabled: true,
+    });
+    mockDb.notification.findMany.mockResolvedValue([
+      {
+        id: "notice_1",
+        creatorId: "creator_1",
+        createdAt: new Date("2026-10-20T11:10:00.000Z"),
+        payload: { amount: "50000000" },
+      },
+      {
+        id: "notice_2",
+        creatorId: "creator_1",
+        createdAt: new Date("2026-10-20T11:55:00.000Z"),
+        payload: { amount: "25000000" },
+      },
+    ]);
+
+    const sent = await sendPendingTipDigests(
+      new Date("2026-10-20T12:05:00.000Z"),
+    );
+
+    expect(sent).toBe(1);
+    expect(mockSend).toHaveBeenCalledTimes(1);
+    const payload = mockSend.mock.calls[0]?.[0];
+    if (!payload) throw new Error("mockSend payload is undefined");
+    expect(payload.subject).toContain("2 tips");
+    expect(payload.text).toContain("7.50 USDC");
+    expect(mockDb.notification.updateMany).toHaveBeenCalledWith({
+      where: {
+        creatorId: "creator_1",
+        type: "TIP_RECEIVED",
+        createdAt: {
+          gte: new Date("2026-10-20T11:00:00.000Z"),
+          lt: new Date("2026-10-20T12:00:00.000Z"),
+        },
+        sentAt: null,
+      },
+      data: { sentAt: new Date("2026-10-20T12:05:00.000Z") },
+    });
   });
 });

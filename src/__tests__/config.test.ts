@@ -5,6 +5,8 @@ const envKeys = [
   "JWT_SECRET",
   "TIP_SPLITTER_CONTRACT_ID",
   "INDEXER_START_LEDGER",
+  "NOTIFICATION_RETENTION_DAYS",
+  "EMAIL_MAX_PER_CREATOR_PER_HOUR",
   "WEBHOOK_TIMEOUT_MS",
   "TIMEOUT_MS",
   "WEBHOOK_MAX_BODY_SIZE",
@@ -31,6 +33,8 @@ beforeEach(() => {
   process.env["JWT_SECRET"] = "test-secret-not-used-for-signing";
   process.env["TIP_SPLITTER_CONTRACT_ID"] = `C${"A".repeat(55)}`;
   delete process.env["INDEXER_START_LEDGER"];
+  delete process.env["NOTIFICATION_RETENTION_DAYS"];
+  delete process.env["EMAIL_MAX_PER_CREATOR_PER_HOUR"];
   delete process.env["WEBHOOK_TIMEOUT_MS"];
   delete process.env["TIMEOUT_MS"];
   delete process.env["WEBHOOK_MAX_BODY_SIZE"];
@@ -76,6 +80,34 @@ describe("config", () => {
     await expect(loadConfig()).rejects.toThrow(
       "Env var INDEXER_START_LEDGER must be an integer",
     );
+  });
+
+  it("defaults notification retention to 90 days", async () => {
+    await expect(loadConfig()).resolves.toMatchObject({
+      notifications: { retentionDays: 90 },
+    });
+  });
+
+  it("allows notification retention to be disabled with zero", async () => {
+    process.env["NOTIFICATION_RETENTION_DAYS"] = "0";
+
+    await expect(loadConfig()).resolves.toMatchObject({
+      notifications: { retentionDays: 0 },
+    });
+  });
+
+  it("defaults individual tip email cap to ten per creator per hour", async () => {
+    await expect(loadConfig()).resolves.toMatchObject({
+      notifications: { emailMaxPerCreatorPerHour: 10 },
+    });
+  });
+
+  it("allows the email cap to be zero to send digests only", async () => {
+    process.env["EMAIL_MAX_PER_CREATOR_PER_HOUR"] = "0";
+
+    await expect(loadConfig()).resolves.toMatchObject({
+      notifications: { emailMaxPerCreatorPerHour: 0 },
+    });
   });
 });
 

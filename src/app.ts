@@ -12,6 +12,9 @@ import {
   stopDeliveryPruner,
 } from "./modules/webhooks/retention.js";
 import {
+  startTipDigestScheduler,
+  stopTipDigestScheduler,
+} from "./modules/notifications/email.service.js";
   startPlaceholderCreatorPruner,
   stopPlaceholderCreatorPruner,
 } from "./modules/creator/placeholder-retention.js";
@@ -28,6 +31,7 @@ startIndexer().catch((err) => {
 
 // Age out old webhook delivery rows on a schedule
 startDeliveryPruner();
+startTipDigestScheduler();
 
 // Age out abandoned sign-in placeholders on a schedule
 startPlaceholderCreatorPruner();
@@ -49,6 +53,7 @@ const shutdown = (): Promise<void> => {
   shuttingDown = (async () => {
     server.log.info("Shutting down...");
     stopDeliveryPruner();
+    stopTipDigestScheduler();
     stopPlaceholderCreatorPruner();
 
     // Forces the process to exit even if the indexer's current iteration or

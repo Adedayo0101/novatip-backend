@@ -56,7 +56,7 @@ services:
       HOST:                      0.0.0.0
       DATABASE_URL:              postgresql://novatip:novatip@postgres:5432/novatip
       REDIS_URL:                 redis://redis:6379
-      JWT_SECRET:                local-dev-secret-change-me
+      JWT_SECRET:                local-dev-secret-change-me-at-least-32-chars
       STELLAR_NETWORK:           testnet
       SOROBAN_RPC_URL:           https://soroban-testnet.stellar.org
       HORIZON_URL:               https://horizon-testnet.stellar.org
@@ -67,8 +67,10 @@ services:
       APP_BASE_URL:              http://localhost:3000
       WEBHOOK_ENCRYPTION_KEY:    ${WEBHOOK_ENCRYPTION_KEY:-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}
       WEBHOOK_ALLOW_PRIVATE_HOSTS: ${WEBHOOK_ALLOW_PRIVATE_HOSTS:-true}
+      NOTIFICATION_RETENTION_DAYS: ${NOTIFICATION_RETENTION_DAYS:-90}
       RESEND_API_KEY:            ${RESEND_API_KEY:-}
       EMAIL_FROM:                ${EMAIL_FROM:-tips@novatip.xyz}
+      EMAIL_MAX_PER_CREATOR_PER_HOUR: ${EMAIL_MAX_PER_CREATOR_PER_HOUR:-10}
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://localhost:3001/api/v1/health/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 10s

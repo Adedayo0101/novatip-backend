@@ -152,10 +152,12 @@ WEBHOOK_MAX_BODY_SIZE - Max response body bytes captured in delivery logs (defau
 WEBHOOK_MAX_PAYLOAD_SIZE - Max stored delivery payload size in bytes (default: 2048)
 WEBHOOK_DELIVERY_RETENTION_DAYS - Prune successful deliveries older than this (default: 30, 0 disables)
 WEBHOOK_DELIVERY_FAILURE_RETENTION_DAYS - Prune failed deliveries older than this (default: 90, 0 disables)
+NOTIFICATION_RETENTION_DAYS - Days notification rows are kept (default: 90, 0 keeps them forever)
 WEBHOOK_DELIVERY_PRUNE_BATCH_SIZE - Rows deleted per statement (default: 500)
 WEBHOOK_DELIVERY_PRUNE_INTERVAL_MINUTES - How often the pruner runs (default: 60)
 RESEND_API_KEY - Resend API key (default: "", which disables email)
 EMAIL_FROM - From address on tip-notification emails (default: tips@novatip.xyz)
+EMAIL_MAX_PER_CREATOR_PER_HOUR - Individual tip emails per creator per UTC hour (default: 10; 0 sends digests only)
 RATE_LIMIT_MAX - Server-wide request budget per window, for routes with no dedicated limiter (default: 100)
 RATE_LIMIT_WINDOW - Window for RATE_LIMIT_MAX, in @fastify/rate-limit's own format (default: "1 minute")
 AUTH_CHALLENGE_RATE_LIMIT - Per-IP cap on POST /auth/challenge, req/min (default: 5)
@@ -729,10 +731,18 @@ requires RESEND_API_KEY on the server and an address on the creator
 (PATCH /creators/me). If either is missing, email is skipped — a creator who
 only wants webhooks does not need to provide an address.
 
+`EMAIL_MAX_PER_CREATOR_PER_HOUR` caps individual tip emails per creator per
+UTC clock hour (default 10). Tips beyond the cap are still recorded as
+TIP_RECEIVED notifications and included in one digest for that creator and
+hour, sent shortly after the hour closes. Set the cap to `0` to send no
+individual tip emails and use digests only. The background digest sender retries
+pending rows if Resend rejects a digest. Email notifications are still gated by
+the creator's `emailEnabled` preference.
+
 Resend reports API failures through the returned `error` rather than by
-throwing, so a rejected send is checked explicitly; the Notification row is
-written only after a send actually succeeds, and never records an email the
-provider refused.
+throwing, so a rejected send is checked explicitly. Tip notification rows are
+stored pending before delivery; successful individual sends and digests set
+`sentAt`, while queued tips remain available for their hourly digest.
 
 Webhook delivery failures are stored in WebhookDelivery and are not retried
 ([issue #15](https://github.com/Novatip/novatip-backend/issues/15)).
@@ -909,6 +919,19 @@ next one. A failed pass is logged and retried on the next tick.
 The prune predicate (`success = ? AND "attemptedAt" < ?`) is served by the
 WebhookDelivery_success_attemptedAt_idx index added in
 prisma/migrations/20260908000000_webhook_delivery_retention_index.
+
+## Notification Retention
+
+Notification rows are pruned by the existing background retention scheduler
+after `NOTIFICATION_RETENTION_DAYS` (default 90 days). Set it to `0` to keep
+notifications indefinitely. Deletes use the configured
+`WEBHOOK_DELIVERY_PRUNE_BATCH_SIZE` in batches, with a ceiling of 50 batches per
+run for notifications so a large backlog cannot block webhook delivery
+retention.
+
+Rows whose `createdAt` is strictly older than the cutoff are eligible for
+deletion; rows at or newer than the cutoff remain available to
+`GET /notifications`.
 
 ### Manual verification
 

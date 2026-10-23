@@ -2,6 +2,8 @@
  * scripts/check-env-docs.ts
  *
  * Fails if any env var src/config.ts reads has no line in README.md's
+ * Environment Variables section, if a required one isn't marked "(required)"
+ * there, or if docker-compose.yml's JWT secret is shorter than config.ts allows.
  * Environment Variables section, or if a required one isn't marked
  * "(required)" there. Also fails if any such var has no line in
  * .env.example — the file the README tells people to copy — whether or not
@@ -36,6 +38,7 @@ const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 
 const configSource = readFileSync(join(root, "src/config.ts"), "utf8");
 const readme = readFileSync(join(root, "README.md"), "utf8");
+const compose = readFileSync(join(root, "docker-compose.yml"), "utf8");
 const envExample = readFileSync(join(root, ".env.example"), "utf8");
 
 // Longest alternative first. Regex alternation does backtrack to a later,
@@ -68,6 +71,34 @@ for (const [key, { required }] of vars) {
   }
 }
 
+const minimumJwtSecretMatch = configSource.match(
+  /const MIN_JWT_SECRET_LENGTH = (\d+);/,
+);
+const minimumJwtSecretLength = Number(minimumJwtSecretMatch?.[1]);
+const composeJwtSecret = compose
+  .match(/^[ \t]*JWT_SECRET:[ \t]*([^\r\n#]*)/m)?.[1]
+  ?.trim()
+  .replace(/^(['"])(.*)\1$/, "$2");
+
+let invalidComposeJwtSecret = false;
+if (!Number.isSafeInteger(minimumJwtSecretLength) || minimumJwtSecretLength < 1) {
+  console.error("Could not read the minimum JWT secret length from config.ts.");
+  invalidComposeJwtSecret = true;
+} else if (!composeJwtSecret) {
+  console.error("docker-compose.yml does not configure JWT_SECRET.");
+  invalidComposeJwtSecret = true;
+} else if (
+  !composeJwtSecret.startsWith("${JWT_SECRET:?") &&
+  composeJwtSecret.length < minimumJwtSecretLength
+) {
+  console.error(
+    `docker-compose.yml JWT_SECRET must be at least ${minimumJwtSecretLength} characters ` +
+      `(got ${composeJwtSecret.length}).`,
+  );
+  invalidComposeJwtSecret = true;
+}
+
+if (missing.length > 0) {
 if (missingFromReadme.length > 0) {
   console.error("README.md is missing these env vars that config.ts reads:");
   for (const key of missingFromReadme) console.error(`  ${key}`);
@@ -86,6 +117,9 @@ if (missingFromEnvExample.length > 0) {
 }
 
 if (
+  missing.length > 0 ||
+  unmarkedRequired.length > 0 ||
+  invalidComposeJwtSecret
   missingFromReadme.length > 0 ||
   unmarkedRequired.length > 0 ||
   missingFromEnvExample.length > 0
