@@ -19,6 +19,7 @@ import { config } from "./config.js";
 import { disconnectDb } from "./db.js";
 import { disconnectRedis, redis } from "./redis.js";
 import { buildLoggerOptions } from "./utils/logger.js";
+import { recordHttpRequest } from "./modules/metrics/metrics.service.js";
 
 export interface BuildServerOptions {
   /**
@@ -89,6 +90,22 @@ export async function buildServer(
     },
   );
 
+  // ── HTTP request metrics ──────────────────────────────────────────────────
+  if (config.metricsEnabled) {
+    server.addHook("onRequest", async (request) => {
+      (request as any).startTime = Date.now();
+    });
+
+    server.addHook("onResponse", async (request, reply) => {
+      const startTime = (request as any).startTime;
+      if (startTime) {
+        const durationSeconds = (Date.now() - startTime) / 1000;
+        const route = request.routeOptions.url || request.url;
+        recordHttpRequest(request.method, route, reply.statusCode, durationSeconds);
+      }
+    });
+  }
+
   // ── Routes ────────────────────────────────────────────────────────────────
   await server.register(
     async (app) => {
@@ -118,6 +135,8 @@ export async function buildServer(
         await import("./modules/public/public.routes.js");
       const { openApiRoutes } =
         await import("./modules/openapi/openapi.routes.js");
+      const { metricsRoutes } =
+        await import("./modules/metrics/metrics.routes.js");
 
       await app.register(healthRoutes, { prefix: "/health" });
       await app.register(authRoutes, { prefix: "/auth" });

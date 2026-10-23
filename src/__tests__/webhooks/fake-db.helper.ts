@@ -482,7 +482,10 @@ export function createFakeDb(): FakeDb {
         id: webhook.id ?? nextId("wh"),
         creatorId: webhook.creatorId,
         url: webhook.url ?? "https://hooks.example.com/novatip",
-        secret: webhook.secret ?? "s".repeat(32),
+        secret: encryptWebhookSecret(
+          webhook.secret ?? "s".repeat(32),
+          fakeEncryptionKey,
+        ),
         enabled: webhook.enabled ?? true,
         createdAt: webhook.createdAt ?? now,
         updatedAt: webhook.updatedAt ?? now,
