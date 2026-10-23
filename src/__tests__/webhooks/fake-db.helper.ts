@@ -80,6 +80,13 @@ interface WebhookWhere {
   creatorId?: string;
 }
 
+interface DeliveryWhere {
+  webhookId?: string;
+  success?: boolean;
+  attemptedAt?: { lt: Date };
+  id?: { in: string[] };
+}
+
 interface Projected {
   [key: string]: unknown;
 }
@@ -121,6 +128,22 @@ function matches(row: FakeWebhook, where: WebhookWhere): boolean {
   if (where.creatorId !== undefined && row.creatorId !== where.creatorId) {
     return false;
   }
+  return true;
+}
+
+function matchesDelivery(row: FakeDelivery, where: DeliveryWhere): boolean {
+  if (where.webhookId !== undefined && row.webhookId !== where.webhookId) {
+    return false;
+  }
+  if (where.success !== undefined && row.success !== where.success)
+    return false;
+  if (
+    where.attemptedAt?.lt !== undefined &&
+    row.attemptedAt >= where.attemptedAt.lt
+  ) {
+    return false;
+  }
+  if (where.id !== undefined && !where.id.in.includes(row.id)) return false;
   return true;
 }
 
@@ -319,14 +342,14 @@ export function createFakeDb(): FakeDb {
         skip,
         select,
       }: {
-        where: { webhookId: string };
+        where: DeliveryWhere;
         orderBy?: OrderBy;
         take?: number;
         skip?: number;
         select?: Select;
       }): Promise<Projected[]> => {
         const found = sortBy(
-          deliveries.filter((row) => row.webhookId === where.webhookId),
+          deliveries.filter((row) => matchesDelivery(row, where)),
           orderBy,
         );
         const start = skip ?? 0;
@@ -335,6 +358,22 @@ export function createFakeDb(): FakeDb {
             ? found.slice(start)
             : found.slice(start, start + take);
         return page.map((row) => project(row, select));
+      },
+
+      deleteMany: async ({
+        where,
+      }: {
+        where: DeliveryWhere;
+      }): Promise<{ count: number }> => {
+        let count = 0;
+        for (let index = deliveries.length - 1; index >= 0; index -= 1) {
+          const row = deliveries[index];
+          if (row !== undefined && matchesDelivery(row, where)) {
+            deliveries.splice(index, 1);
+            count += 1;
+          }
+        }
+        return { count };
       },
     },
 
