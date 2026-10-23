@@ -161,6 +161,11 @@ async function runLoop(options?: IndexerOptions): Promise<void> {
             config.stellar.rpcUrl,
             config.stellar.rpcTimeoutMs,
           );
+          // Update metrics with current lag
+          if (observedHead !== null) {
+            const lag = observedHead - startLedger;
+            updateIndexerLag(lag >= 0 ? lag : 0);
+          }
         } catch (err) {
           // Cursor freshness is an optimisation — never let it stop indexing.
           indexerLogger.warn({ err }, "could not read chain head");
@@ -201,6 +206,7 @@ async function runLoop(options?: IndexerOptions): Promise<void> {
         if (cursorLedger !== null) {
           await updateCursor(cursorLedger);
           persistedCursor = cursorLedger;
+          updateIndexerCursor(cursorLedger);
         }
       } else {
         // No tips in this range — advance to chain head so an idle stretch
@@ -220,6 +226,7 @@ async function runLoop(options?: IndexerOptions): Promise<void> {
           await updateCursor(advance.cursorLedger);
           startLedger = advance.nextStartLedger;
           persistedCursor = advance.cursorLedger;
+          updateIndexerCursor(advance.cursorLedger);
         }
       }
 
