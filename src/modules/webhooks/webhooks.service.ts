@@ -21,6 +21,10 @@ import { logger } from "../../utils/logger.js";
 import { assertWebhookLimit, webhookLimit } from "./limit.js";
 import { notifyWebhookFailure } from "../notifications/webhook-failure.service.js";
 import {
+  recordWebhookDelivery,
+  recordWebhookDuration,
+} from "../metrics/metrics.service.js";
+import {
   decryptWebhookSecret,
   encryptWebhookSecret,
   isEncryptedWebhookSecret,
@@ -172,6 +176,7 @@ async function deliver(
   payload: DeliveryPayload,
 ): Promise<DeliveryOutcome> {
   const timestamp = Math.floor(Date.now() / 1000).toString();
+  const startTime = Date.now();
 
   let statusCode: number | undefined;
   let responseText: string | undefined;
@@ -215,6 +220,11 @@ async function deliver(
     responseText = String(err).slice(0, config.webhooks.maxBodySize);
     success = false;
   }
+
+  // Record metrics
+  const durationSeconds = (Date.now() - startTime) / 1000;
+  recordWebhookDuration(durationSeconds);
+  recordWebhookDelivery(success ? 'success' : 'failure');
 
   // Record delivery attempt
   const attempt = await db.webhookDelivery.create({
