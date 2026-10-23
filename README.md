@@ -162,6 +162,57 @@ AUTH_CHALLENGE_RATE_LIMIT - Per-IP cap on POST /auth/challenge, req/min (default
 QR_RATE_LIMIT - Per-IP cap on the QR endpoints, req/min (default: 10)
 APP_BASE_URL - Frontend base URL (default: http://localhost:3000)
 CORS_ALLOWED_ORIGINS - Comma-separated origins allowed through CORS in production (default: just APP_BASE_URL; ignored outside production, where any origin is allowed)
+METRICS_ENABLED - Enable Prometheus metrics endpoint at /metrics (default: false)
+METRICS_TOKEN - Bearer token for /metrics authentication; if empty, the endpoint should bind to an internal address only (default: "")
+
+## Metrics
+
+The `/metrics` endpoint exposes Prometheus-compatible metrics for monitoring and
+alerting. It is **disabled by default**. Set `METRICS_ENABLED=true` to enable.
+
+### Authentication
+
+Metrics can be protected in two ways:
+
+1. **Bearer token** - Set `METRICS_TOKEN` to a secret value. Requests must
+   include `Authorization: Bearer <token>`. This is suitable when the metrics
+   endpoint is exposed publicly or to a monitoring system.
+
+2. **Network binding** - Leave `METRICS_TOKEN` empty and bind the server to an
+   internal address accessible only to your monitoring infrastructure.
+
+### Available metrics
+
+**Indexer metrics:**
+- `novatip_indexer_cursor_ledger` - Current indexer cursor ledger number
+- `novatip_indexer_lag_ledgers` - Number of ledgers the indexer is behind chain head
+- `novatip_indexer_last_successful_poll_timestamp` - Unix timestamp of last successful poll
+- `novatip_tips_indexed_total` - Total number of tips indexed (counter)
+
+**Webhook metrics:**
+- `novatip_webhook_deliveries_total{outcome}` - Total delivery attempts by outcome (success/failure)
+- `novatip_webhook_delivery_duration_seconds` - Webhook delivery duration histogram
+
+**HTTP metrics:**
+- `novatip_http_requests_total{method,route,status}` - Total HTTP requests
+- `novatip_http_request_duration_seconds{method,route,status}` - HTTP request duration histogram
+
+### Example queries
+
+**Alert when indexer falls behind:**
+```promql
+novatip_indexer_lag_ledgers > 100
+```
+
+**Alert on webhook failure rate:**
+```promql
+rate(novatip_webhook_deliveries_total{outcome="failure"}[5m]) > 0.1
+```
+
+**Monitor HTTP error rate:**
+```promql
+sum(rate(novatip_http_requests_total{status=~"5.."}[5m])) / sum(rate(novatip_http_requests_total[5m])) > 0.01
+```
 
 ## API reference
 
