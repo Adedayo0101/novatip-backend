@@ -34,7 +34,10 @@ const deleteWebhooksMock =
   jest.fn<
     (args: { where: { creatorId: string } }) => Promise<{ count: number }>
   >();
+const releasedSlugUpsertMock = jest.fn(async () => ({}));
 const cacheInvalidateMock = jest.fn<(key: string) => Promise<void>>();
+const revokeCreatorTokensMock =
+  jest.fn<(creatorId: string) => Promise<void>>();
 
 const tx = {
   creator: {
@@ -47,6 +50,7 @@ const tx = {
     deleteMany: deleteWebhooksMock,
   },
   webhookDelivery: { deleteMany: deleteDeliveriesMock },
+  releasedSlug: { upsert: releasedSlugUpsertMock },
 };
 const transactionMock = jest.fn(
   async (callback: (transaction: typeof tx) => Promise<unknown>) =>
@@ -58,6 +62,7 @@ jest.unstable_mockModule("../../db.js", () => ({
 }));
 jest.unstable_mockModule("../../redis.js", () => ({
   cacheInvalidate: cacheInvalidateMock,
+  revokeCreatorTokens: revokeCreatorTokensMock,
   cacheGet: jest.fn(async () => null),
   cacheSet: jest.fn(async () => undefined),
 }));
@@ -79,10 +84,11 @@ beforeEach(() => {
   deleteDeliveriesMock.mockResolvedValue({ count: 3 });
   deleteWebhooksMock.mockResolvedValue({ count: 2 });
   cacheInvalidateMock.mockResolvedValue(undefined);
+  revokeCreatorTokensMock.mockResolvedValue(undefined);
 });
 
 describe("deleteCreator", () => {
-  it("deletes owned data transactionally, retains tips by detaching them, and frees the profile slug", async () => {
+  it("deletes owned data transactionally and holds the deleted profile slug", async () => {
     await deleteCreator(CREATOR_ID);
 
     expect(transactionMock).toHaveBeenCalledTimes(1);
@@ -103,10 +109,20 @@ describe("deleteCreator", () => {
     expect(deleteWebhooksMock).toHaveBeenCalledWith({
       where: { creatorId: CREATOR_ID },
     });
+    expect(releasedSlugUpsertMock).toHaveBeenCalledWith({
+      where: { slug: "alice" },
+      create: {
+        slug: "alice",
+        previousOwnerId: null,
+        releasedAt: expect.any(Date),
+      },
+      update: { previousOwnerId: null, releasedAt: expect.any(Date) },
+    });
     expect(deleteCreatorMock).toHaveBeenCalledWith({
       where: { id: CREATOR_ID },
     });
     expect(cacheInvalidateMock).toHaveBeenCalledWith("creator:alice");
+    expect(revokeCreatorTokensMock).toHaveBeenCalledWith(CREATOR_ID);
 
     expect(deleteNotificationsMock.mock.invocationCallOrder[0]).toBeLessThan(
       deleteWebhooksMock.mock.invocationCallOrder[0]!,
@@ -143,6 +159,8 @@ describe("deleteCreator", () => {
     expect(deleteNotificationsMock).not.toHaveBeenCalled();
     expect(findWebhooksMock).not.toHaveBeenCalled();
     expect(deleteCreatorMock).not.toHaveBeenCalled();
+    expect(releasedSlugUpsertMock).not.toHaveBeenCalled();
     expect(cacheInvalidateMock).not.toHaveBeenCalled();
+    expect(revokeCreatorTokensMock).not.toHaveBeenCalled();
   });
 });

@@ -58,6 +58,7 @@ jest.unstable_mockModule("../../redis.js", () => ({
   cacheInvalidate: cacheInvalidateMock,
   cacheGet: jest.fn(async () => null),
   cacheSet: jest.fn(async () => undefined),
+  revokeCreatorTokens: jest.fn(async () => undefined),
   disconnectRedis: async (): Promise<void> => undefined,
 }));
 

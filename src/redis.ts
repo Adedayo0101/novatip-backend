@@ -70,6 +70,26 @@ export async function consumeAuthNonce(
 }
 
 /**
+ * Mark every outstanding token for a deleted creator as revoked until the
+ * longest configured JWT lifetime has elapsed.
+ */
+export async function revokeCreatorTokens(creatorId: string): Promise<void> {
+  await redis.set(
+    `auth:revoked:${creatorId}`,
+    "1",
+    "EX",
+    config.jwtExpiresInSeconds,
+  );
+}
+
+/** Check the Redis revocation marker; authenticated requests do no DB lookup. */
+export async function areCreatorTokensRevoked(
+  creatorId: string,
+): Promise<boolean> {
+  return (await redis.exists(`auth:revoked:${creatorId}`)) === 1;
+}
+
+/**
  * Cache a JSON value with a TTL (seconds).
  */
 export async function cacheSet(

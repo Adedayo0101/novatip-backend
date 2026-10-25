@@ -57,7 +57,7 @@ interface FakeCreatorRow {
 
 interface FakeReleaseRow {
   slug: string;
-  previousOwnerId: string;
+  previousOwnerId: string | null;
   releasedAt: Date;
 }
 
@@ -95,7 +95,7 @@ const releasedUpsertMock = jest.fn(
   async (args: {
     where: { slug: string };
     create: FakeReleaseRow;
-    update: { previousOwnerId: string; releasedAt: Date };
+    update: { previousOwnerId: string | null; releasedAt: Date };
   }) => {
     const existing = releases.get(args.where.slug);
     const row = existing ? { ...existing, ...args.update } : { ...args.create };
@@ -122,6 +122,7 @@ jest.unstable_mockModule("../../redis.js", () => ({
   cacheInvalidate: jest.fn(async () => undefined),
   cacheGet: jest.fn(async () => null),
   cacheSet: jest.fn(async () => undefined),
+  revokeCreatorTokens: jest.fn(async () => undefined),
   disconnectRedis: async (): Promise<void> => undefined,
 }));
 
@@ -369,6 +370,39 @@ describe("recording a released slug", () => {
   test("a no-op rename records no release", async () => {
     await renameSlug({ creatorId: ALICE, slug: "alice" });
     expect(releasedUpsertMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("a slug held after account deletion", () => {
+  const NEWCOMER = "creator_newcomer";
+
+  beforeEach(() => {
+    creators.set(NEWCOMER, {
+      id: NEWCOMER,
+      slug: "user_1234abcd",
+      jarId: "@user_1234abcd",
+      displayName: null,
+      bio: null,
+      splits: [],
+    });
+    holdSlug("deletedslug", null, new Date(Date.now() - DAY_MS));
+  });
+
+  test("is unavailable and cannot be claimed during the hold", async () => {
+    await expect(isSlugAvailable("deletedslug")).resolves.toBe(false);
+    await expect(isSlugAvailable("deletedslug", BOB)).resolves.toBe(false);
+    await expect(
+      claimSlug({ creatorId: NEWCOMER, slug: "deletedslug" }),
+    ).rejects.toMatchObject({ statusCode: 409, code: "SLUG_TAKEN" });
+  });
+
+  test("becomes available and claimable when the hold expires", async () => {
+    holdSlug("deletedslug", null, new Date(Date.now() - 91 * DAY_MS));
+
+    await expect(isSlugAvailable("deletedslug")).resolves.toBe(true);
+    await expect(
+      claimSlug({ creatorId: NEWCOMER, slug: "deletedslug" }),
+    ).resolves.toMatchObject({ slug: "deletedslug", jarId: "@deletedslug" });
   });
 });
 

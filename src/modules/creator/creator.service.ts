@@ -13,7 +13,12 @@
 import { Prisma } from "@prisma/client";
 import { db } from "../../db.js";
 import { config } from "../../config.js";
-import { cacheInvalidate, cacheGet, cacheSet } from "../../redis.js";
+import {
+  cacheInvalidate,
+  cacheGet,
+  cacheSet,
+  revokeCreatorTokens,
+} from "../../redis.js";
 import { resolveJarId } from "./jar-id.js";
 import { CREATOR_SLUG_REGEX } from "../../utils/validation.js";
 
@@ -414,11 +419,21 @@ export async function deleteCreator(creatorId: string): Promise<void> {
     }
 
     await tx.webhook.deleteMany({ where: { creatorId } });
+    await tx.releasedSlug.upsert({
+      where: { slug: creator.slug },
+      create: {
+        slug: creator.slug,
+        previousOwnerId: null,
+        releasedAt: new Date(),
+      },
+      update: { previousOwnerId: null, releasedAt: new Date() },
+    });
     await tx.creator.delete({ where: { id: creatorId } });
 
     return creator.slug;
   });
 
+  await revokeCreatorTokens(creatorId);
   await cacheInvalidate(`creator:${slug}`);
 }
 
@@ -492,6 +507,17 @@ export async function getCreatorBySlug(slug: string): Promise<PublicCreator> {
  * Update an authenticated creator's profile fields.
  */
 export async function updateProfile(input: UpdateProfileInput) {
+  const current =
+    input.email === undefined
+      ? null
+      : await db.creator.findUnique({
+          where: { id: input.creatorId },
+          select: { email: true },
+        });
+  if (input.email !== undefined && !current) {
+    throw Object.assign(new Error("Creator not found."), { statusCode: 404 });
+  }
+
   const creator = await db.creator.update({
     where: { id: input.creatorId },
     // See the note in claimSlug: absent key, not an explicit undefined.
@@ -501,7 +527,10 @@ export async function updateProfile(input: UpdateProfileInput) {
       }),
       ...(input.bio !== undefined && { bio: input.bio }),
       ...(input.avatarUrl !== undefined && { avatarUrl: input.avatarUrl }),
-      ...(input.email !== undefined && { email: input.email }),
+      ...(input.email !== undefined && {
+        email: input.email,
+        ...(input.email !== current?.email && { emailVerifiedAt: null }),
+      }),
     },
   });
 

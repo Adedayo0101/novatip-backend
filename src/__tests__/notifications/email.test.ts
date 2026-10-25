@@ -32,6 +32,7 @@ type CreatorRecord = {
   displayName?: string | null;
   email?: string | null;
   emailEnabled: boolean;
+  emailVerifiedAt: Date | null;
 };
 
 type NotificationRecord = {
@@ -46,7 +47,7 @@ const mockSend =
 
 jest.unstable_mockModule("resend", () => ({
   Resend: jest.fn().mockImplementation(() => ({
-    emails: {      send: mockSend,
+    emails: { send: mockSend },
     },
   })),
 }));
@@ -61,8 +62,6 @@ const mockDb = {
     update: jest.fn<() => Promise<unknown>>(),
     findMany: jest.fn<() => Promise<NotificationRecord[]>>(),
     updateMany: jest.fn<() => Promise<{ count: number }>>(),
-    create: jest.fn<() => Promise<{ id: string }>>(),
-    update: jest.fn<() => Promise<unknown>>(),
   },
 };
 
@@ -84,7 +83,6 @@ describe("sendTipNotification", () => {
     mockDb.notification.update.mockResolvedValue({});
     mockDb.notification.findMany.mockResolvedValue([]);
     mockDb.notification.updateMany.mockResolvedValue({ count: 0 });
-    mockDb.notification.create.mockResolvedValue({ id: "notification_1" });
   });
 
   const tipEvent: TipEvent = {
@@ -104,6 +102,7 @@ describe("sendTipNotification", () => {
       displayName: "Alice",
       email: "alice@example.com",
       emailEnabled: true,
+      emailVerifiedAt: new Date(),
     });
 
     await sendTipNotification(tipEvent);
@@ -147,6 +146,7 @@ describe("sendTipNotification", () => {
       displayName: 'Bob <Admin> "The Great"',
       email: "bob@example.com",
       emailEnabled: true,
+      emailVerifiedAt: new Date(),
     });
 
     const xssTip: TipEvent = {
@@ -179,6 +179,7 @@ describe("sendTipNotification", () => {
       displayName: "Alice",
       email: "alice@example.com",
       emailEnabled: true,
+      emailVerifiedAt: new Date(),
     });
 
     const tipWithoutMessage: TipEvent = {
@@ -205,12 +206,13 @@ describe("sendTipNotification", () => {
         slug: "alice",
         email: "alice@example.com",
         emailEnabled: true,
+        emailVerifiedAt: new Date(),
       });
 
       await sendTipNotification(tipEvent);
 
       expect(mockSend).not.toHaveBeenCalled();
-      expect(mockDb.notification.create).toHaveBeenCalledTimes(1);
+      expect(mockDb.notification.create).not.toHaveBeenCalled();
       expect(mockDb.notification.update).not.toHaveBeenCalled();
     } finally {
       (config.resend as { apiKey?: string | undefined }).apiKey = originalKey;
@@ -234,6 +236,7 @@ describe("sendTipNotification", () => {
       displayName: "Alice",
       email: null,
       emailEnabled: true,
+      emailVerifiedAt: null,
     });
 
     await sendTipNotification(tipEvent);
@@ -251,6 +254,24 @@ describe("sendTipNotification", () => {
       displayName: "Alice",
       email: "alice@example.com",
       emailEnabled: false,
+      emailVerifiedAt: new Date(),
+    });
+
+    it("does not email an unverified address", async () => {
+      mockDb.creator.findUnique.mockResolvedValue({
+        id: "creator_1",
+        slug: "alice",
+        displayName: "Alice",
+        email: "unverified@example.com",
+        emailEnabled: true,
+        emailVerifiedAt: null,
+      });
+
+      await sendTipNotification(tipEvent);
+
+      expect(mockSend).not.toHaveBeenCalled();
+      expect(mockDb.notification.create).toHaveBeenCalledTimes(1);
+      expect(mockDb.notification.update).not.toHaveBeenCalled();
     });
 
     await sendTipNotification(tipEvent);
@@ -267,6 +288,7 @@ describe("sendTipNotification", () => {
       displayName: "Alice",
       email: "alice@example.com",
       emailEnabled: true,
+      emailVerifiedAt: new Date(),
     });
 
     await sendTipNotification(tipEvent);
@@ -286,6 +308,7 @@ describe("sendTipNotification", () => {
       displayName: "Alice",
       email: "alice@example.com",
       emailEnabled: true,
+      emailVerifiedAt: new Date(),
     });
     mockDb.notification.count.mockResolvedValue(1);
 
@@ -303,6 +326,7 @@ describe("sendTipNotification", () => {
       displayName: "Alice",
       email: "alice@example.com",
       emailEnabled: true,
+      emailVerifiedAt: new Date(),
     });
 
     // Successful send marks the existing feed row as sent.
@@ -344,6 +368,7 @@ describe("sendTipNotification", () => {
       displayName: "Alice",
       email: "alice@example.com",
       emailEnabled: true,
+      emailVerifiedAt: new Date(),
     });
     mockDb.notification.count.mockResolvedValue(2);
 
@@ -361,6 +386,7 @@ describe("sendTipNotification", () => {
       displayName: "Alice",
       email: "alice@example.com",
       emailEnabled: true,
+      emailVerifiedAt: new Date(),
     });
     mockDb.notification.findMany.mockResolvedValue([
       {

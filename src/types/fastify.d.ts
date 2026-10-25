@@ -21,11 +21,15 @@ declare module "@fastify/jwt" {
       sub: string;
       wallet: string;
       slug: string;
+      email?: string;
+      purpose?: "creator-email-verification";
     };
     user: {
       sub: string;
       wallet: string;
       slug: string;
+      email?: string;
+      purpose?: "creator-email-verification";
     };
   }
 }
