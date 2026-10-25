@@ -8,7 +8,7 @@
  */
 
 import { jest } from "@jest/globals";
-import Fastify, { type FastifyInstance, type FastifyRequest, type FastifyReply } from "fastify";
+import Fastify, { type FastifyInstance } from "fastify";
 import jwtPlugin from "@fastify/jwt";
 
 process.env["DATABASE_URL"] ??= "postgresql://user:pass@localhost:5432/test";
@@ -20,6 +20,7 @@ interface CreatorRecord {
   walletAddress: string;
   slug: string;
   jarId: string;
+  emailVerifiedAt: Date | null;
   displayName: string | null;
   bio: string | null;
   splits: unknown;
@@ -28,7 +29,10 @@ interface CreatorRecord {
 let creatorsDb = new Map<string, CreatorRecord>();
 
 const findUniqueMock = jest.fn(
-  async (args: { where: { id?: string; walletAddress?: string; slug?: string }; select?: Record<string, boolean> }) => {
+  async (args: {
+    where: { id?: string; walletAddress?: string; slug?: string };
+    select?: Record<string, boolean>;
+  }) => {
     if (args.where.id) {
       const creator = creatorsDb.get(args.where.id);
       if (!creator) return null;
@@ -61,11 +65,35 @@ const updateMock = jest.fn(
   },
 );
 
+const creatorDeleteMock = jest.fn(async (args: { where: { id: string } }) => {
+  creatorsDb.delete(args.where.id);
+  return {};
+});
+const transactionMock = jest.fn(
+  async (callback: (tx: Record<string, unknown>) => Promise<unknown>) =>
+    await callback({
+      creator: {
+        findUnique: findUniqueMock,
+        delete: creatorDeleteMock,
+      },
+      notification: { deleteMany: jest.fn(async () => ({ count: 0 })) },
+      webhook: {
+        findMany: jest.fn(async () => []),
+        deleteMany: jest.fn(async () => ({ count: 0 })),
+      },
+      webhookDelivery: { deleteMany: jest.fn(async () => ({ count: 0 })) },
+      releasedSlug: { upsert: jest.fn(async () => ({})) },
+    }),
+);
+const revokedCreatorIds = new Set<string>();
+
 jest.unstable_mockModule("../../db.js", () => ({
   db: {
+    $transaction: transactionMock,
     creator: {
       findUnique: findUniqueMock,
       update: updateMock,
+      delete: creatorDeleteMock,
     },
     // The claim below releases the initial slug; hold checks and the
     // release upsert both run against this table.
@@ -73,6 +101,7 @@ jest.unstable_mockModule("../../db.js", () => ({
       findUnique: jest.fn(async () => null),
       upsert: jest.fn(async () => null),
     },
+    tip: { updateMany: jest.fn(async () => ({ count: 0 })) },
   },
   disconnectDb: async (): Promise<void> => undefined,
 }));
@@ -83,11 +112,21 @@ jest.unstable_mockModule("../../redis.js", () => ({
   cacheInvalidate: jest.fn(async () => undefined),
   cacheGet: jest.fn(async () => null),
   cacheSet: jest.fn(async () => undefined),
+  revokeCreatorTokens: jest.fn(async (creatorId: string) => {
+    revokedCreatorIds.add(creatorId);
+  }),
+  areCreatorTokensRevoked: jest.fn(async (creatorId: string) =>
+    revokedCreatorIds.has(creatorId),
+  ),
   disconnectRedis: async (): Promise<void> => undefined,
 }));
 
 const { authRoutes } = await import("../../modules/auth/auth.routes.js");
-const { claimSlug } = await import("../../modules/creator/creator.service.js");
+const { creatorRoutes } =
+  await import("../../modules/creator/creator.routes.js");
+const { authenticate } = await import("../../modules/auth/authenticate.js");
+const { claimSlug, deleteCreator } =
+  await import("../../modules/creator/creator.service.js");
 
 describe("GET /auth/me fresh slug and authentication", () => {
   let app: FastifyInstance;
@@ -96,12 +135,14 @@ describe("GET /auth/me fresh slug and authentication", () => {
   const INITIAL_SLUG = "user_initial42";
 
   beforeEach(async () => {
+    revokedCreatorIds.clear();
     creatorsDb = new Map<string, CreatorRecord>();
     creatorsDb.set(CREATOR_ID, {
       id: CREATOR_ID,
       walletAddress: WALLET,
       slug: INITIAL_SLUG,
       jarId: `@${INITIAL_SLUG}`,
+      emailVerifiedAt: null,
       displayName: null,
       bio: null,
       splits: [],
@@ -112,23 +153,10 @@ describe("GET /auth/me fresh slug and authentication", () => {
       secret: "test-secret-at-least-32-chars-long-123456",
     });
 
-    app.decorate(
-      "authenticate",
-      async function (request: FastifyRequest, reply: FastifyReply) {
-        try {
-          await request.jwtVerify();
-        } catch {
-          reply.status(401).send({
-            error: {
-              code: "UNAUTHORIZED",
-              message: "Authentication required.",
-            },
-          });
-        }
-      },
-    );
+    app.decorate("authenticate", authenticate);
 
     await app.register(authRoutes);
+    await app.register(creatorRoutes);
     await app.ready();
   });
 
@@ -142,6 +170,7 @@ describe("GET /auth/me fresh slug and authentication", () => {
       sub: CREATOR_ID,
       wallet: WALLET,
       slug: INITIAL_SLUG,
+      emailVerifiedAt: null,
     });
 
     // Initial check: should return INITIAL_SLUG
@@ -175,6 +204,7 @@ describe("GET /auth/me fresh slug and authentication", () => {
         sub: CREATOR_ID,
         wallet: WALLET,
         slug: claimedSlug,
+        emailVerifiedAt: null,
       },
     });
   });
@@ -198,5 +228,31 @@ describe("GET /auth/me fresh slug and authentication", () => {
         code: "UNAUTHORIZED",
       },
     });
+  });
+
+  test("rejects an existing token on a profile-write route immediately after deletion", async () => {
+    const token = app.jwt.sign({
+      sub: CREATOR_ID,
+      wallet: WALLET,
+      slug: INITIAL_SLUG,
+    });
+
+    await deleteCreator(CREATOR_ID);
+    findUniqueMock.mockClear();
+    updateMock.mockClear();
+
+    const res = await app.inject({
+      method: "PATCH",
+      url: "/me",
+      headers: { authorization: `Bearer ${token}` },
+      payload: { displayName: "Should not be written" },
+    });
+
+    expect(res.statusCode).toBe(401);
+    expect(res.json()).toMatchObject({
+      error: { code: "UNAUTHORIZED" },
+    });
+    expect(findUniqueMock).not.toHaveBeenCalled();
+    expect(updateMock).not.toHaveBeenCalled();
   });
 });

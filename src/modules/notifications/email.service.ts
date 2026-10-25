@@ -22,6 +22,7 @@ interface TipEmailCreator {
   slug: string;
   displayName: string | null;
   email: string | null;
+  emailVerifiedAt: Date | null;
 }
 
 async function deliverEmail(
@@ -64,73 +65,13 @@ function tipEmailContent(
   const amount = formatUsdc(event.amount, 2);
   const displayName = creator.displayName ?? creator.slug;
   const message = event.message ? `"${event.message}"` : "No message left.";
+  const htmlMessage = event.message
+    ? `"${escapeHtml(event.message)}"`
+    : "No message left.";
 
   return {
     subject: `💸 You received $${amount} USDC on Novatip!`,
     text: [
-/**
- * Send a tip-received email notification to the creator.
- *
- * Called from the indexer's per-event path, so it never throws: a notification
- * failing must not stop a tip being recorded or its webhooks being delivered.
- */
-export async function sendTipNotification(event: TipEvent): Promise<void> {
-  try {
-    const creator = await db.creator.findUnique({
-      where: { jarId: event.jarId },
-    });
-
-    if (!creator) return;
-
-    const notification = await db.notification.create({
-      data: {
-        creatorId: creator.id,
-        type: "TIP_RECEIVED",
-        payload: {
-          from: event.from,
-          amount: event.amount.toString(),
-          message: event.message,
-          ledger: event.ledger,
-          timestamp: event.timestamp,
-        },
-      },
-    });
-
-    // The feed entry is recorded even when the email channel is unavailable
-    // or disabled. `sentAt` stays null until Resend accepts the message.
-    if (!config.resend.apiKey) return;
-
-    if (!creator.emailEnabled) {
-      emailLogger.debug(
-        { slug: creator.slug },
-        "creator has email notifications switched off — skipping tip notification",
-      );
-      return;
-    }
-
-    if (!creator.email) {
-      emailLogger.debug(
-        { slug: creator.slug },
-        "creator has no email on record — skipping tip notification",
-      );
-      return;
-    }
-
-    const amount = formatUsdc(event.amount, 2);
-    const displayName = creator.displayName ?? creator.slug;
-    const message = event.message ? `"${event.message}"` : "No message left.";
-
-    const safeDisplayName = escapeHtml(displayName);
-    const safeAmount = escapeHtml(amount);
-    const safeMessage = event.message
-      ? `"${escapeHtml(event.message)}"`
-      : "No message left.";
-
-    // Dynamic import so Resend is only loaded when the API key is set
-    const { Resend } = await import("resend");
-    const resend = new Resend(config.resend.apiKey);
-
-    const text = [
       `Hey ${displayName}!`,
       "",
       `Someone just tipped you $${amount} USDC on Novatip.`,
@@ -144,14 +85,42 @@ export async function sendTipNotification(event: TipEvent): Promise<void> {
       <p>
         Someone just tipped you <strong>$${escapeHtml(amount)} USDC</strong> on Novatip.
       </p>
-      <p><em>${
-        event.message ? `"${escapeHtml(event.message)}"` : "No message left."
-      }</em></p>
+      <p><em>${htmlMessage}</em></p>
       <p>
         <a href="${config.appBaseUrl}/dashboard">View your dashboard →</a>
       </p>
     `,
   };
+}
+
+export async function sendEmailVerificationEmail(
+  email: string,
+  confirmationUrl: string,
+): Promise<void> {
+  if (!config.resend.apiKey) {
+    throw Object.assign(new Error("Email delivery is not configured."), {
+      statusCode: 503,
+      code: "EMAIL_DELIVERY_UNAVAILABLE",
+    });
+  }
+
+  const { Resend } = await import("resend");
+  const resend = new Resend(config.resend.apiKey);
+  const { error } = await resend.emails.send({
+    from: config.resend.from,
+    to: [email],
+    subject: "Confirm your Novatip notification email",
+    text: `Confirm your notification email by visiting: ${confirmationUrl}\n\nThis link expires in 24 hours.`,
+    html: `<p>Confirm your notification email by clicking the link below. This link expires in 24 hours.</p><p><a href="${escapeHtml(confirmationUrl)}">Confirm email address</a></p>`,
+  });
+
+  if (error) {
+    emailLogger.error({ err: error }, "Resend rejected the verification email");
+    throw Object.assign(
+      new Error("Could not send the email verification message."),
+      { statusCode: 502, code: "EMAIL_DELIVERY_FAILED" },
+    );
+  }
 }
 
 /**
@@ -160,14 +129,22 @@ export async function sendTipNotification(event: TipEvent): Promise<void> {
  * failed sends remain available for the hourly digest.
  */
 export async function sendTipNotification(event: TipEvent): Promise<void> {
-  if (!config.resend.apiKey) return;
-
   try {
     const creator = await db.creator.findUnique({
       where: { jarId: event.jarId },
     });
     if (!creator) return;
 
+    const notification = await db.notification.create({
+      data: {
+        creatorId: creator.id,
+        type: "TIP_RECEIVED",
+        payload: tipPayload(event),
+      },
+      select: { id: true },
+    });
+
+    if (!config.resend.apiKey) return;
     if (!creator.emailEnabled) {
       emailLogger.debug(
         { slug: creator.slug },
@@ -179,6 +156,13 @@ export async function sendTipNotification(event: TipEvent): Promise<void> {
       emailLogger.debug(
         { slug: creator.slug },
         "creator has no email on record — skipping tip notification",
+      );
+      return;
+    }
+    if (!creator.emailVerifiedAt) {
+      emailLogger.debug(
+        { slug: creator.slug },
+        "creator email is not verified — skipping tip notification",
       );
       return;
     }
@@ -195,19 +179,6 @@ export async function sendTipNotification(event: TipEvent): Promise<void> {
         createdAt: { gte: windowStart, lt: windowEnd },
         sentAt: { not: null },
       },
-    });
-
-    const notification = await db.notification.create({
-      data: {
-        creatorId: creator.id,
-        type: "TIP_RECEIVED",
-        payload: tipPayload(event),
-        createdAt: now,
-      },
-      select: { id: true },
-    await db.notification.update({
-      where: { id: notification.id },
-      data: { sentAt: new Date() },
     });
 
     if (sentThisWindow >= config.notifications.emailMaxPerCreatorPerHour) {
@@ -278,6 +249,13 @@ export async function sendPendingTipDigests(
         where: { id: first.creatorId },
       });
       if (!creator?.emailEnabled || !creator.email) continue;
+      if (!creator.emailVerifiedAt) {
+        emailLogger.debug(
+          { slug: creator.slug },
+          "creator email is not verified — skipping tip digest",
+        );
+        continue;
+      }
 
       let totalAmount = 0n;
       for (const row of rows) {

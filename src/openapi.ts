@@ -231,7 +231,13 @@ export const openApiSpecification = {
         summary: "Verify a signed challenge and issue a JWT",
         success: json("The signed-in session.", schema("VerifyResponse")),
         requestBody: requestBody(schema("VerifyRequest")),
-        extraResponses: { "400": validationError },
+        extraResponses: {
+          "400": validationError,
+          "429": json(
+            "Too many verification requests from this IP.",
+            schema("RateLimitResponse"),
+          ),
+        },
       }),
     },
     "/auth/me": {
@@ -281,6 +287,8 @@ export const openApiSpecification = {
     "/creators/me": {
       patch: operation({
         summary: "Update the authenticated creator profile",
+        description:
+          "Changing the notification email clears its verification state and sends a signed confirmation link valid for 24 hours. Tip emails are sent only to a verified address.",
         success: json("The updated creator.", schema("CreatorResponse")),
         requestBody: requestBody(schema("UpdateProfileRequest")),
         secured: true,
@@ -289,11 +297,33 @@ export const openApiSpecification = {
       delete: operation({
         summary: "Delete the authenticated creator account",
         description:
-          "Permanently removes the profile, notifications, webhooks, and webhook delivery history. Indexed tips are retained as on-chain financial history but detached from the deleted creator.",
+          "Permanently removes the profile, notifications, webhooks, and webhook delivery history. The deleted creator's slug remains unavailable for the configured hold period, and existing JWTs are rejected. Indexed tips are retained as on-chain financial history but detached from the deleted creator.",
         successStatus: 204,
         success: { description: "Creator account deleted." },
         secured: true,
         extraResponses: { "404": notFound },
+      }),
+    },
+    "/creators/email/verify": {
+      get: operation({
+        summary: "Confirm a creator notification email",
+        description:
+          "Confirms an address using the signed, single-use link sent after it is added or changed. The link expires after 24 hours.",
+        parameters: [
+          {
+            name: "token",
+            in: "query",
+            required: true,
+            description:
+              "Signed email verification token from the confirmation email.",
+            schema: { type: "string" },
+          },
+        ],
+        success: json(
+          "The email address was verified.",
+          schema("EmailVerificationResponse"),
+        ),
+        extraResponses: { "400": validationError },
       }),
     },
     "/creators/me/splits": {
@@ -795,10 +825,15 @@ export const openApiSpecification = {
               sub: { type: "string" },
               wallet: { type: "string" },
               slug: { type: "string", nullable: true },
+              emailVerifiedAt: {
+                type: "string",
+                format: "date-time",
+                nullable: true,
+              },
               iat: { type: "number" },
               exp: { type: "number" },
             },
-            required: ["sub", "wallet", "slug"],
+            required: ["sub", "wallet", "slug", "emailVerifiedAt"],
           },
         },
         required: ["user"],
@@ -844,6 +879,11 @@ export const openApiSpecification = {
           bio: { type: "string", nullable: true },
           avatarUrl: { type: "string", nullable: true },
           email: { type: "string", nullable: true },
+          emailVerifiedAt: {
+            type: "string",
+            format: "date-time",
+            nullable: true,
+          },
           jarId: { type: "string" },
           splits: { type: "array", items: schema("Split") },
           createdAt: { type: "string", format: "date-time" },
@@ -857,6 +897,7 @@ export const openApiSpecification = {
           "bio",
           "avatarUrl",
           "email",
+          "emailVerifiedAt",
           "jarId",
           "splits",
           "createdAt",
@@ -872,6 +913,11 @@ export const openApiSpecification = {
         type: "object",
         properties: { creator: schema("Creator") },
         required: ["creator"],
+      },
+      EmailVerificationResponse: {
+        type: "object",
+        properties: { verified: { type: "boolean" } },
+        required: ["verified"],
       },
       SlugAvailabilityResponse: {
         type: "object",

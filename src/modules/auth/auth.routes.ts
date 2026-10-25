@@ -13,18 +13,12 @@ import { db } from "../../db.js";
 import { generateChallenge, verifyChallenge } from "./auth.service.js";
 
 /**
- * POST /auth/challenge generates a 32-byte nonce and writes it to Redis.
- * It is unauthenticated by nature, so under the shared global budget (100
- * req/min) a single caller can exhaust the allowance minting nonces for
- * arbitrary wallet addresses, filling Redis with short-lived keys and
- * starving legitimate auth traffic.
- *
- * This dedicated limiter enforces a much tighter per-IP cap. The limit is
- * configurable via AUTH_CHALLENGE_RATE_LIMIT (default 5 req/min per IP) —
- * see config.ts, which fails fast on a non-numeric value rather than letting
- * a typo quietly fall back to the default.
+ * The challenge and verification endpoints have dedicated per-IP limits:
+ * challenge bounds nonce creation and verification bounds signature checks
+ * plus database work, independently of the shared global request budget.
  */
 const AUTH_CHALLENGE_RATE_LIMIT = config.rateLimits.authChallenge;
+const AUTH_VERIFY_RATE_LIMIT = config.rateLimits.authVerify;
 
 interface SlidingWindow {
   count: number;
@@ -78,10 +72,9 @@ const VerifyBody = z.object({
 
 export const authRoutes: FastifyPluginAsync = async (app) => {
   // ── POST /challenge ────────────────────────────────────────────────────────
-  // Applied per-route via onRequest below rather than as a plugin-wide hook, so
-  // it covers the challenge endpoint only. /verify is protected by the nonce
-  // being single-use, and /me by the JWT.
+  // Applied per-route via onRequest rather than as a plugin-wide hook.
   const challengeLimiter = buildSlidingWindowLimiter(AUTH_CHALLENGE_RATE_LIMIT);
+  const verifyLimiter = buildSlidingWindowLimiter(AUTH_VERIFY_RATE_LIMIT);
 
   app.post(
     "/challenge",
@@ -99,27 +92,31 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
   );
 
   // ── POST /verify ───────────────────────────────────────────────────────────
-  app.post("/verify", async (request, reply) => {
-    const body = VerifyBody.safeParse(request.body);
-    if (!body.success) {
-      return reply.status(400).send({ error: body.error.flatten() });
-    }
+  app.post(
+    "/verify",
+    { onRequest: [verifyLimiter] },
+    async (request, reply) => {
+      const body = VerifyBody.safeParse(request.body);
+      if (!body.success) {
+        return reply.status(400).send({ error: body.error.flatten() });
+      }
 
-    const { jwt, isNewUser } = await verifyChallenge(
-      body.data.walletAddress,
-      body.data.message,
-      body.data.signatureHex,
-      (payload) => app.jwt.sign(payload),
-    );
+      const { jwt, isNewUser } = await verifyChallenge(
+        body.data.walletAddress,
+        body.data.message,
+        body.data.signatureHex,
+        (payload) => app.jwt.sign(payload),
+      );
 
-    return reply.send({ jwt, isNewUser });
-  });
+      return reply.send({ jwt, isNewUser });
+    },
+  );
 
   // ── GET /me ────────────────────────────────────────────────────────────────
   app.get("/me", { onRequest: [app.authenticate] }, async (request, reply) => {
     const creator = await db.creator.findUnique({
       where: { id: request.user.sub },
-      select: { slug: true },
+      select: { slug: true, emailVerifiedAt: true },
     });
 
     if (!creator) {
@@ -135,6 +132,7 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
       user: {
         ...request.user,
         slug: creator.slug,
+        emailVerifiedAt: creator.emailVerifiedAt,
       },
     });
   });
