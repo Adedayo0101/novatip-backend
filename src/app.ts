@@ -15,6 +15,7 @@ import {
   startTipDigestScheduler,
   stopTipDigestScheduler,
 } from "./modules/notifications/email.service.js";
+import {
   startPlaceholderCreatorPruner,
   stopPlaceholderCreatorPruner,
 } from "./modules/creator/placeholder-retention.js";

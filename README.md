@@ -67,7 +67,9 @@ delivery paths:
 
 - **Creator** represents a tip recipient. Its wallet address, public slug, and
   on-chain `jarId` are unique. A creator has many tips, webhooks, and
-  notifications. `jarId` is unique because each on-chain jar must resolve to
+  notifications. Its optional notification email is tracked separately from
+  `emailVerifiedAt`, which is set only after the creator confirms the address.
+  `jarId` is unique because each on-chain jar must resolve to
   exactly one creator; the slug and wallet address likewise identify a single
   public profile and account.
 - **Tip** stores an indexed on-chain tip, including its transaction hash,
@@ -142,7 +144,7 @@ INDEXER_START_LEDGER - Ledger to begin indexing from (default: 0)
 INDEXER_RPC_TIMEOUT_MS - Timeout for indexer RPC calls in milliseconds (default: 5000)
 INDEXER_POLL_INTERVAL_MS - How often the indexer polls Soroban RPC for new TipReceived events, in milliseconds (default: 6000)
 INDEXER_POLL_LIMIT - Max TipReceived events fetched from Soroban RPC per poll iteration (default: 200)
-CREATOR_SLUG_HOLD_DAYS - Days a slug released by renaming (or by a claim that leaves the sign-in placeholder behind) stays reserved for its previous owner before anyone else may claim it (default: 90, 0 disables the hold)
+CREATOR_SLUG_HOLD_DAYS - Days a slug released by renaming, claiming, or account deletion stays unavailable (default: 90, 0 disables the hold; deleted accounts have no owner exemption)
 PLACEHOLDER_CREATOR_RETENTION_DAYS - Days before an abandoned sign-in placeholder (unclaimed user_xxxxxxxx slug, no tips, webhooks, notifications or released slugs) becomes eligible for deletion (default: 30, 0 disables the job)
 PLACEHOLDER_CREATOR_PRUNE_BATCH_SIZE - Rows deleted per statement (default: 500)
 PLACEHOLDER_CREATOR_PRUNE_INTERVAL_MINUTES - How often the placeholder pruner runs (default: 60)
@@ -157,13 +159,15 @@ NOTIFICATION_RETENTION_DAYS - Days notification rows are kept (default: 90, 0 ke
 WEBHOOK_DELIVERY_PRUNE_BATCH_SIZE - Rows deleted per statement (default: 500)
 WEBHOOK_DELIVERY_PRUNE_INTERVAL_MINUTES - How often the pruner runs (default: 60)
 RESEND_API_KEY - Resend API key (default: "", which disables email)
-EMAIL_FROM - From address on tip-notification emails (default: tips@novatip.xyz)
+EMAIL_FROM - From address on tip and email-verification messages (default: tips@novatip.xyz)
 EMAIL_MAX_PER_CREATOR_PER_HOUR - Individual tip emails per creator per UTC hour (default: 10; 0 sends digests only)
 RATE_LIMIT_MAX - Server-wide request budget per window, for routes with no dedicated limiter (default: 100)
 RATE_LIMIT_WINDOW - Window for RATE_LIMIT_MAX, in @fastify/rate-limit's own format (default: "1 minute")
 AUTH_CHALLENGE_RATE_LIMIT - Per-IP cap on POST /auth/challenge, req/min (default: 5)
+AUTH_VERIFY_RATE_LIMIT - Per-IP cap on POST /auth/verify, req/min (default: 5)
 QR_RATE_LIMIT - Per-IP cap on the QR endpoints, req/min (default: 10)
 APP_BASE_URL - Frontend base URL (default: http://localhost:3000)
+API_BASE_URL - Public backend base URL for email confirmation links (default: http://localhost:3001)
 CORS_ALLOWED_ORIGINS - Comma-separated origins allowed through CORS in production (default: just APP_BASE_URL; ignored outside production, where any origin is allowed)
 METRICS_ENABLED - Enable Prometheus metrics endpoint at /metrics (default: false)
 METRICS_TOKEN - Bearer token for /metrics authentication; if empty, the endpoint should bind to an internal address only (default: "")
@@ -237,6 +241,7 @@ GET /creators/:slug - Public creator profile
 GET /creators/check/:slug - Slug availability
 POST /creators/claim - Claim a slug (JWT)
 PATCH /creators/me - Update profile (JWT)
+GET /creators/email/verify?token=... - Confirm a notification email
 PATCH /creators/me/splits - Update splits (JWT)
 
 Reserved slugs (api, admin, dashboard, onboarding, settings, login, logout,
@@ -269,7 +274,11 @@ PATCH /creators/me accepts an optional email address, used as the recipient
 for tip notifications. It is private: the public creator endpoint and
 /resolve/:slug both read through getCreatorBySlug, whose select allowlists the
 world-readable columns and omits it. Send null to clear a stored address; omit
-the field to leave it unchanged.
+the field to leave it unchanged. Adding or changing the address sends a signed
+verification link that expires after 24 hours. Tip notification emails are
+sent only after confirmation; the profile response includes `emailVerifiedAt`
+(`null` while the address is unverified). A link opens
+`GET /creators/email/verify?token=...` and confirms the current address once.
 
 displayName, bio and avatarUrl follow the same omit-to-leave-unchanged rule.
 Unlike email, they also accept an empty or whitespace-only string as a way to
@@ -278,7 +287,9 @@ instead. Values are trimmed before storing either way, so " " and "" both
 clear the field rather than storing whitespace.
 
 DELETE /creators/me permanently removes the authenticated creator's profile
-and frees their slug. It also deletes their notifications, webhooks, and
+and places their slug on the configured hold, preventing anyone from claiming
+it while old links and on-chain tips may still point to it. Deleted-creator
+tokens are rejected for their remaining configured lifetime. It also deletes their notifications, webhooks, and
 webhook delivery history, which are account-owned operational data. Indexed
 tips are retained because they represent immutable on-chain financial history;
 their creator association is cleared so deleting the profile does not erase or

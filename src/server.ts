@@ -7,8 +7,6 @@
 
 import Fastify, {
   FastifyInstance,
-  FastifyRequest,
-  FastifyReply,
   RouteOptions,
 } from "fastify";
 import cors from "@fastify/cors";
@@ -19,6 +17,7 @@ import { config } from "./config.js";
 import { disconnectDb } from "./db.js";
 import { drainWebhookDeliveries } from "./modules/webhooks/webhooks.service.js";
 import { disconnectRedis, redis } from "./redis.js";
+import { authenticate } from "./modules/auth/authenticate.js";
 import { buildLoggerOptions } from "./utils/logger.js";
 import { recordHttpRequest } from "./modules/metrics/metrics.service.js";
 
@@ -73,22 +72,7 @@ export async function buildServer(
   // Convenience decorator so route handlers can call request.authenticate()
   server.decorate(
     "authenticate",
-    async function (request: FastifyRequest, reply: FastifyReply) {
-      try {
-        await request.jwtVerify();
-      } catch (err) {
-        // err.code distinguishes a missing token (FST_JWT_NO_AUTHORIZATION_IN_HEADER)
-        // from an invalid or expired one — kept in the log, not in the response,
-        // since the client gets no more than "unauthorized" either way.
-        server.log.warn({ err, url: request.url }, "authentication failed");
-        reply.status(401).send({
-          error: {
-            code: "UNAUTHORIZED",
-            message: "Authentication required.",
-          },
-        });
-      }
-    },
+    authenticate,
   );
 
   // ── HTTP request metrics ──────────────────────────────────────────────────

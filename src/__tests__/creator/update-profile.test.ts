@@ -36,6 +36,7 @@ interface FakeCreatorRow {
   bio: string | null;
   avatarUrl: string | null;
   email: string | null;
+  emailVerifiedAt: Date | null;
 }
 
 function baseRow(): FakeCreatorRow {
@@ -46,6 +47,7 @@ function baseRow(): FakeCreatorRow {
     bio: "Hello there",
     avatarUrl: "https://cdn.example.com/alice.png",
     email: "alice@example.com",
+    emailVerifiedAt: new Date("2025-01-01T00:00:00.000Z"),
   };
 }
 
@@ -57,16 +59,30 @@ const updateMock = jest.fn(
     return stored;
   },
 );
+const findUniqueMock = jest.fn(
+  async () => ({ email: stored.email }) as { email: string | null },
+);
+const sendEmailVerificationEmailMock = jest.fn(async () => undefined);
 
 jest.unstable_mockModule("../../db.js", () => ({
-  db: { creator: { update: updateMock } },
+  db: {
+    creator: {
+      findUnique: findUniqueMock,
+      update: updateMock,
+    },
+  },
   disconnectDb: async (): Promise<void> => undefined,
+}));
+
+jest.unstable_mockModule("../../modules/notifications/email.service.js", () => ({
+  sendEmailVerificationEmail: sendEmailVerificationEmailMock,
 }));
 
 jest.unstable_mockModule("../../redis.js", () => ({
   cacheInvalidate: jest.fn(async () => undefined),
   cacheGet: jest.fn(async () => null),
   cacheSet: jest.fn(async () => undefined),
+  revokeCreatorTokens: jest.fn(async () => undefined),
   disconnectRedis: async (): Promise<void> => undefined,
 }));
 
@@ -159,7 +175,10 @@ describe("PATCH /creators/me — clearing with null", () => {
       expect(res.statusCode).toBe(200);
       expect(updateMock).toHaveBeenCalledWith({
         where: { id: CREATOR },
-        data: { [field]: null },
+        data:
+          field === "email"
+            ? { email: null, emailVerifiedAt: null }
+            : { [field]: null },
       });
       expect(stored[field as keyof FakeCreatorRow]).toBeNull();
     },
@@ -208,6 +227,31 @@ describe("PATCH /creators/me — trimming", () => {
     expect(updateMock).toHaveBeenCalledWith({
       where: { id: CREATOR },
       data: { displayName: "Alice", bio: "Hello" },
+    });
+  });
+
+  describe("PATCH /creators/me — email verification", () => {
+    it("clears verification and sends a confirmation link when the address changes", async () => {
+      const res = await patchMe({ email: "new@example.com" });
+
+      expect(res.statusCode).toBe(200);
+      expect(stored.email).toBe("new@example.com");
+      expect(stored.emailVerifiedAt).toBeNull();
+      expect(sendEmailVerificationEmailMock).toHaveBeenCalledWith(
+        "new@example.com",
+        expect.stringContaining("/api/v1/creators/email/verify?token="),
+      );
+      expect(res.json()).toMatchObject({
+        creator: { email: "new@example.com", emailVerifiedAt: null },
+      });
+    });
+
+    it("does not reset verification when the address is unchanged", async () => {
+      const verifiedAt = stored.emailVerifiedAt;
+      await patchMe({ email: "alice@example.com" });
+
+      expect(stored.emailVerifiedAt).toBe(verifiedAt);
+      expect(sendEmailVerificationEmailMock).not.toHaveBeenCalled();
     });
   });
 

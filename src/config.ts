@@ -110,6 +110,7 @@ function optionalBoolean(key: string, fallback: boolean): boolean {
 }
 
 const appBaseUrl = optional("APP_BASE_URL", "http://localhost:3000");
+const apiBaseUrl = optional("API_BASE_URL", "http://localhost:3001");
 const nodeEnv = optional("NODE_ENV", "development");
 const webhookEncryptionKey = optional("WEBHOOK_ENCRYPTION_KEY", "");
 
@@ -135,6 +136,24 @@ if (jwtSecretValue.length < MIN_JWT_SECRET_LENGTH) {
 
 const jwtExpiresIn = optional("JWT_EXPIRES_IN", "7d");
 validateJwtExpiresIn(jwtExpiresIn);
+const jwtExpiresInSeconds = (() => {
+  const match = /^(\d+)([smhdwy])$/.exec(jwtExpiresIn);
+  if (!match) throw new Error("Invalid JWT expiration duration");
+
+  const multiplier: Record<string, number> = {
+    s: 1,
+    m: 60,
+    h: 3_600,
+    d: 86_400,
+    w: 604_800,
+    y: 31_557_600,
+  };
+  const seconds = Number(match[1]) * multiplier[match[2]!];
+  if (!Number.isSafeInteger(seconds)) {
+    throw new Error("JWT_EXPIRES_IN exceeds the supported duration");
+  }
+  return Math.max(1, seconds);
+})();
 
 const stellarNetwork = optional("STELLAR_NETWORK", "testnet");
 if (!isStellarNetwork(stellarNetwork)) {
@@ -153,6 +172,7 @@ export const config = {
 
   jwtSecret: jwtSecretValue,
   jwtExpiresIn,
+  jwtExpiresInSeconds,
 
   stellar: {
     network: stellarNetwork,
@@ -362,6 +382,12 @@ export const config = {
     authChallenge: optionalInt("AUTH_CHALLENGE_RATE_LIMIT", 5),
 
     /**
+     * Per-IP cap on POST /auth/verify, which validates a Stellar signature and
+     * performs database work on success.
+     */
+    authVerify: optionalInt("AUTH_VERIFY_RATE_LIMIT", 5),
+
+    /**
      * Per-IP cap on the QR endpoints. QR generation is CPU-heavy (512px PNG
      * rasterisation) and public, so the shared global budget is far too
      * permissive — a single client could exhaust it with QR requests alone.
@@ -376,6 +402,7 @@ export const config = {
   },
 
   appBaseUrl,
+  apiBaseUrl,
 
   /**
    * Origins allowed through CORS in production. The web client deploys to a

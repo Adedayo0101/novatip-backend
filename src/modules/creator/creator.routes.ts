@@ -23,6 +23,9 @@ import {
   deleteCreator,
   type PublicCreator,
 } from "./creator.service.js";
+import { config } from "../../config.js";
+import { db } from "../../db.js";
+import { sendEmailVerificationEmail } from "../notifications/email.service.js";
 import {
   creatorEmail,
   httpsUrl,
@@ -62,6 +65,10 @@ const UpdateSplitsBody = z.object({
 
 const MessageVisibilityBody = z.object({
   hidden: z.boolean(),
+});
+
+const EmailVerificationQuery = z.object({
+  token: z.string().min(1),
 });
 
 export const creatorRoutes: FastifyPluginAsync = async (app) => {
@@ -125,9 +132,81 @@ export const creatorRoutes: FastifyPluginAsync = async (app) => {
         creatorId: user.sub,
         ...body.data,
       });
+
+      if (body.data.email && !creator.emailVerifiedAt) {
+        const token = app.jwt.sign(
+          {
+            sub: creator.id,
+            email: body.data.email,
+            purpose: "creator-email-verification",
+          },
+          { expiresIn: "24h" },
+        );
+        const confirmationUrl = new URL(
+          "/api/v1/creators/email/verify",
+          config.apiBaseUrl,
+        );
+        confirmationUrl.searchParams.set("token", token);
+        await sendEmailVerificationEmail(
+          body.data.email,
+          confirmationUrl.toString(),
+        );
+      }
+
       return reply.send({ creator });
     },
   );
+
+  // ── GET /email/verify — confirm a notification email using a signed link ──
+  app.get("/email/verify", async (request, reply) => {
+    const query = EmailVerificationQuery.safeParse(request.query);
+    if (!query.success) {
+      return reply.status(400).send({ error: query.error.flatten() });
+    }
+
+    let claims: ReturnType<typeof app.jwt.verify>;
+    try {
+      claims = app.jwt.verify(query.data.token);
+    } catch {
+      return reply.status(400).send({
+        error: {
+          code: "INVALID_EMAIL_VERIFICATION_TOKEN",
+          message: "The email verification link is invalid or has expired.",
+        },
+      });
+    }
+    if (
+      claims.purpose !== "creator-email-verification" ||
+      typeof claims.sub !== "string" ||
+      typeof claims.email !== "string"
+    ) {
+      return reply.status(400).send({
+        error: {
+          code: "INVALID_EMAIL_VERIFICATION_TOKEN",
+          message: "The email verification link is invalid or has expired.",
+        },
+      });
+    }
+
+    const result = await db.creator.updateMany({
+      where: {
+        id: claims.sub,
+        email: claims.email,
+        emailVerifiedAt: null,
+      },
+      data: { emailVerifiedAt: new Date() },
+    });
+    if (result.count === 0) {
+      return reply.status(400).send({
+        error: {
+          code: "INVALID_EMAIL_VERIFICATION_TOKEN",
+          message: "The email address changed or has already been verified.",
+        },
+      });
+    }
+
+    return reply.send({ verified: true });
+  });
 
   // ── PATCH /me/splits — auth required ──────────────────────────────────────
   app.patch(

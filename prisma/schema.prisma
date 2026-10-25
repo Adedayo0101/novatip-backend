@@ -32,6 +32,8 @@ model Creator {
   /// the select in getCreatorBySlug, which backs both the public creator
   /// endpoint and the resolver.
   email       String?
+  /// Set only after the creator proves control of the notification address.
+  emailVerifiedAt DateTime?
   /// Whether tip-notification emails are switched on. Defaults to true so
   /// the migration backfills existing creators as "on" — nothing turns off
   /// until a creator turns it off.
@@ -71,9 +73,9 @@ model Creator {
 model ReleasedSlug {
   /// The released slug, e.g. "alice" — one row per slug, the latest release
   slug            String   @id
-  /// The creator who released it: the only one who may take it while held
-  previousOwnerId String
-  previousOwner   Creator  @relation(fields: [previousOwnerId], references: [id], onDelete: Cascade)
+  /// Null for deleted accounts; their held slug has no exempt owner.
+  previousOwnerId String?
+  previousOwner   Creator? @relation(fields: [previousOwnerId], references: [id], onDelete: SetNull)
   /// When it was released; the hold expires CREATOR_SLUG_HOLD_DAYS after this
   releasedAt      DateTime @default(now())
 
