@@ -16,6 +16,19 @@ process.env["TIP_SPLITTER_CONTRACT_ID"] ??= `C${"A".repeat(55)}`;
 const fetchTipEventsMock = jest.fn<() => Promise<any[]>>();
 const readCursorMock = jest.fn(async () => 100);
 const updateCursorMock = jest.fn(async () => {});
+const persistedHashes: string[] = [];
+let resolveSecondTipPersist: () => void = () => {};
+let secondTipPersisted = new Promise<void>(() => {});
+const persistTipMock = jest.fn(async (event: { txHash: string }) => {
+  persistedHashes.push(event.txHash);
+  return true;
+});
+const enqueueWebhookDispatchMock = jest.fn(() => {
+  void new Promise<void>(() => {});
+  if (enqueueWebhookDispatchMock.mock.calls.length === 2) {
+    resolveSecondTipPersist();
+  }
+});
 
 jest.unstable_mockModule("@novatip/sdk", () => ({
   fetchTipEvents: fetchTipEventsMock,
@@ -30,11 +43,11 @@ jest.unstable_mockModule("../../indexer/rpc.js", () => ({
 jest.unstable_mockModule("../../indexer/persist.js", () => ({
   readCursor: readCursorMock,
   updateCursor: updateCursorMock,
-  persistTip: jest.fn(async () => {}),
+  persistTip: persistTipMock,
 }));
 
 jest.unstable_mockModule("../../modules/webhooks/webhooks.service.js", () => ({
-  dispatchWebhooks: jest.fn(async () => {}),
+  enqueueWebhookDispatch: enqueueWebhookDispatchMock,
 }));
 
 jest.unstable_mockModule("../../modules/notifications/email.service.js", () => ({
@@ -64,6 +77,13 @@ describe("interruptible indexer sleep (#81)", () => {
     readCursorMock.mockReset();
     readCursorMock.mockResolvedValue(100);
     updateCursorMock.mockReset();
+    persistedHashes.length = 0;
+    resolveSecondTipPersist = () => {};
+    secondTipPersisted = new Promise<void>((resolve) => {
+      resolveSecondTipPersist = resolve;
+    });
+    persistTipMock.mockClear();
+    enqueueWebhookDispatchMock.mockClear();
   });
 
   afterEach(async () => {
@@ -133,5 +153,39 @@ describe("interruptible indexer sleep (#81)", () => {
     await loopPromise;
     expect(pollFinished).toBe(true);
     expect(stopResolved).toBe(true);
+  });
+
+  test("a never-resolving delivery does not block persisting the next tip", async () => {
+    fetchTipEventsMock
+      .mockResolvedValueOnce([
+        {
+          jarId: "@alice",
+          from: "GUSER123",
+          amount: 1n,
+          message: "",
+          ledger: 101,
+          timestamp: "2026-01-01T00:00:00Z",
+          txHash: "tip-1",
+        },
+        {
+          jarId: "@alice",
+          from: "GUSER123",
+          amount: 1n,
+          message: "",
+          ledger: 102,
+          timestamp: "2026-01-01T00:00:00Z",
+          txHash: "tip-2",
+        },
+      ])
+      .mockResolvedValue([]);
+
+    const loopPromise = startIndexer({ pollIntervalMs: 10_000, pollLimit: 200 });
+    await secondTipPersisted;
+
+    expect(persistedHashes).toEqual(["tip-1", "tip-2"]);
+    expect(enqueueWebhookDispatchMock).toHaveBeenCalledTimes(2);
+
+    await stopIndexer();
+    await loopPromise;
   });
 });

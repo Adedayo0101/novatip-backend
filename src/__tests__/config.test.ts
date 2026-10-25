@@ -8,6 +8,7 @@ const envKeys = [
   "NOTIFICATION_RETENTION_DAYS",
   "EMAIL_MAX_PER_CREATOR_PER_HOUR",
   "WEBHOOK_TIMEOUT_MS",
+  "WEBHOOK_DELIVERY_CONCURRENCY",
   "TIMEOUT_MS",
   "WEBHOOK_MAX_BODY_SIZE",
   "MAX_BODY_SIZE",
@@ -36,6 +37,7 @@ beforeEach(() => {
   delete process.env["NOTIFICATION_RETENTION_DAYS"];
   delete process.env["EMAIL_MAX_PER_CREATOR_PER_HOUR"];
   delete process.env["WEBHOOK_TIMEOUT_MS"];
+  delete process.env["WEBHOOK_DELIVERY_CONCURRENCY"];
   delete process.env["TIMEOUT_MS"];
   delete process.env["WEBHOOK_MAX_BODY_SIZE"];
   delete process.env["MAX_BODY_SIZE"];
@@ -137,6 +139,22 @@ describe("config.webhooks", () => {
     expect(warnSpy).not.toHaveBeenCalled();
   });
 
+  it("configures the global webhook delivery concurrency", async () => {
+    process.env["WEBHOOK_DELIVERY_CONCURRENCY"] = "3";
+
+    await expect(loadConfig()).resolves.toMatchObject({
+      webhooks: { deliveryConcurrency: 3 },
+    });
+  });
+
+  it("rejects a non-positive webhook delivery concurrency", async () => {
+    process.env["WEBHOOK_DELIVERY_CONCURRENCY"] = "0";
+
+    await expect(loadConfig()).rejects.toThrow(
+      "Env var WEBHOOK_DELIVERY_CONCURRENCY must be >= 1",
+    );
+  });
+
   it("ignores the unprefixed name once the prefixed one is set", async () => {
     process.env["WEBHOOK_TIMEOUT_MS"] = "7000";
     process.env["TIMEOUT_MS"] = "60000";
@@ -178,7 +196,12 @@ describe("config.webhooks", () => {
 
   it("uses the default when neither name is set", async () => {
     await expect(loadConfig()).resolves.toMatchObject({
-      webhooks: { timeoutMs: 5_000, maxBodySize: 1_024, maxPayloadSize: 2_048 },
+      webhooks: {
+        timeoutMs: 5_000,
+        maxBodySize: 1_024,
+        maxPayloadSize: 2_048,
+        deliveryConcurrency: 10,
+      },
     });
     expect(warnSpy).not.toHaveBeenCalled();
   });

@@ -211,6 +211,8 @@ export const config = {
   webhooks: {
     encryptionKey: webhookEncryptionKey,
     allowPrivateHosts: optionalBoolean("WEBHOOK_ALLOW_PRIVATE_HOSTS", false),
+    /** Maximum number of webhook HTTP requests in flight across the process. */
+    deliveryConcurrency: optionalInt("WEBHOOK_DELIVERY_CONCURRENCY", 10, 1),
     /**
      * How long (in ms) to wait for an endpoint to answer before timing out
      * and recording a failed delivery. Defaults to 5,000 ms (5s), giving external
@@ -233,6 +235,7 @@ export const config = {
       "WEBHOOK_MAX_BODY_SIZE",
       "MAX_BODY_SIZE",
       1_024,
+      0,
     ),
 
     /**

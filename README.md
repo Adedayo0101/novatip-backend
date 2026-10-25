@@ -147,6 +147,7 @@ PLACEHOLDER_CREATOR_RETENTION_DAYS - Days before an abandoned sign-in placeholde
 PLACEHOLDER_CREATOR_PRUNE_BATCH_SIZE - Rows deleted per statement (default: 500)
 PLACEHOLDER_CREATOR_PRUNE_INTERVAL_MINUTES - How often the placeholder pruner runs (default: 60)
 MAX_WEBHOOKS_PER_CREATOR - Most webhooks one creator may register (default: 5, 0 removes the cap)
+WEBHOOK_DELIVERY_CONCURRENCY - Maximum webhook HTTP requests in flight across the process (default: 10)
 WEBHOOK_TIMEOUT_MS - Timeout for a webhook endpoint to answer before the delivery is recorded as failed, in milliseconds (default: 5000)
 WEBHOOK_MAX_BODY_SIZE - Max response body bytes captured in delivery logs (default: 1024)
 WEBHOOK_MAX_PAYLOAD_SIZE - Max stored delivery payload size in bytes (default: 2048)
