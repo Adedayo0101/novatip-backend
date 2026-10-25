@@ -24,6 +24,10 @@ const { createFakeDb } = await import("./fake-db.helper.js");
 type Fake = ReturnType<typeof createFakeDb>;
 
 let fake: Fake;
+const webhookLoggerMock = {
+  error: jest.fn<(fields: object, message: string) => void>(),
+  warn: jest.fn<(fields: object, message: string) => void>(),
+};
 
 jest.unstable_mockModule("../../db.js", () => ({
   db: new Proxy(
@@ -36,7 +40,11 @@ jest.unstable_mockModule("../../db.js", () => ({
   disconnectDb: async (): Promise<void> => undefined,
 }));
 
-const { dispatchWebhooks } =
+jest.unstable_mockModule("../../utils/logger.js", () => ({
+  logger: { child: () => webhookLoggerMock },
+}));
+
+const { dispatchWebhooks, sendTestPing } =
   await import("../../modules/webhooks/webhooks.service.js");
 
 const CREATOR = "creator_alice";
@@ -73,6 +81,8 @@ function succeed(): void {
 beforeEach(() => {
   fake = createFakeDb();
   mockFetch.mockReset();
+  webhookLoggerMock.error.mockClear();
+  webhookLoggerMock.warn.mockClear();
   globalThis.fetch = mockFetch as unknown as typeof fetch;
   // The fake db's own clock (see fake-db.helper.ts) starts here regardless of
   // what each test does, so pinning the system clock to the same instant
@@ -204,5 +214,55 @@ describe("a broken notification write", () => {
     // through even though the notification could not be written.
     expect(fake.deliveries).toHaveLength(1);
     expect(fake.deliveries[0]).toMatchObject({ success: false });
+  });
+
+  it("logs a failed delivery-row write and still notifies the creator", async () => {
+    fake.seedCreator({ id: CREATOR, jarId: "@alice" });
+    const webhook = fake.seedWebhook({
+      creatorId: CREATOR,
+      url: "https://hooks.example.com/novatip",
+    });
+    failWith(500, "receiver failed");
+
+    const client = fake.db as {
+      webhookDelivery: { create: (...args: never[]) => unknown };
+    };
+    jest
+      .spyOn(client.webhookDelivery, "create")
+      .mockImplementation(() => {
+        throw new Error("delivery table is down");
+      });
+
+    await expect(dispatchWebhooks(tip)).resolves.toBeUndefined();
+
+    expect(webhookLoggerMock.error).toHaveBeenCalledWith(
+      expect.objectContaining({ webhookId: webhook.id }),
+      "failed to record webhook delivery",
+    );
+    expect(fake.deliveries).toHaveLength(0);
+    expect(fake.notifications).toHaveLength(1);
+    expect(fake.notifications[0]).toMatchObject({
+      creatorId: CREATOR,
+      type: "WEBHOOK_FAILED",
+      payload: { webhookId: webhook.id, statusCode: 500 },
+    });
+  });
+
+  it("returns a failed ping outcome instead of throwing when its row cannot be written", async () => {
+    const webhook = fake.seedWebhook({ creatorId: CREATOR });
+    const client = fake.db as {
+      webhookDelivery: { create: (...args: never[]) => unknown };
+    };
+    jest
+      .spyOn(client.webhookDelivery, "create")
+      .mockImplementation(() => {
+        throw new Error("delivery table is down");
+      });
+    succeed();
+
+    await expect(sendTestPing(CREATOR, webhook.id)).resolves.toMatchObject({
+      success: false,
+      statusCode: 200,
+    });
   });
 });

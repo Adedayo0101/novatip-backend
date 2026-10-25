@@ -3,11 +3,9 @@
  *
  * Cap on how many webhooks one creator may register.
  *
- * dispatchWebhooks fans out to every enabled endpoint on every indexed tip,
- * each with its own five second timeout and its own WebhookDelivery row. With
- * no cap, one tip turns into an unbounded amount of outbound work inside the
- * indexer's event handling — a cost problem, and the easiest way to make
- * indexing slow without touching the chain at all.
+ * dispatchWebhooks fans out to every enabled endpoint on every indexed tip.
+ * The delivery queue bounds concurrent outbound requests; this cap also
+ * bounds how much queued work one tip can create.
  *
  * The decision is split out from the service so it can be reasoned about (and
  * tested) without a database: the service supplies the current count, this

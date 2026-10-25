@@ -105,6 +105,99 @@ export interface DeliveryOutcome {
   attemptedAt: Date;
 }
 
+interface DeliveryQueueJob {
+  run: () => Promise<DeliveryOutcome>;
+  resolve: (outcome: DeliveryOutcome) => void;
+  reject: (reason: unknown) => void;
+}
+
+const deliveryQueue: DeliveryQueueJob[] = [];
+const deliveryQueueIdleWaiters: Array<() => void> = [];
+let activeDeliveries = 0;
+let activeDispatches = 0;
+
+function resolveDeliveryQueueIdle(): void {
+  if (
+    activeDispatches !== 0 ||
+    activeDeliveries !== 0 ||
+    deliveryQueue.length !== 0
+  ) {
+    return;
+  }
+
+  for (const resolve of deliveryQueueIdleWaiters.splice(0)) resolve();
+}
+
+function processDeliveryQueue(): void {
+  while (
+    activeDeliveries < config.webhooks.deliveryConcurrency &&
+    deliveryQueue.length > 0
+  ) {
+    const job = deliveryQueue.shift()!;
+    activeDeliveries += 1;
+    void job
+      .run()
+      .then(job.resolve, job.reject)
+      .finally(() => {
+        activeDeliveries -= 1;
+        processDeliveryQueue();
+        resolveDeliveryQueueIdle();
+      });
+  }
+
+  resolveDeliveryQueueIdle();
+}
+
+function queueDelivery(
+  webhook: { id: string; url: string; secret: string },
+  body: string,
+  payload: DeliveryPayload,
+): Promise<DeliveryOutcome> {
+  return new Promise((resolve, reject) => {
+    deliveryQueue.push({
+      run: () => deliver(webhook, body, payload),
+      resolve,
+      reject,
+    });
+    processDeliveryQueue();
+  });
+}
+
+/**
+ * Wait until queued dispatches and all their deliveries have completed.
+ * Used during shutdown before the database connection is closed.
+ */
+export function drainWebhookDeliveries(): Promise<void> {
+  if (
+    activeDispatches === 0 &&
+    activeDeliveries === 0 &&
+    deliveryQueue.length === 0
+  ) {
+    return Promise.resolve();
+  }
+
+  return new Promise((resolve) => deliveryQueueIdleWaiters.push(resolve));
+}
+
+/**
+ * Start dispatching a tip without holding up the indexer event loop.
+ * Background errors are logged; the delivery queue is drained on shutdown.
+ */
+export function enqueueWebhookDispatch(event: TipEvent): void {
+  activeDispatches += 1;
+  void dispatchWebhooks(event)
+    .catch((err: unknown) => {
+      webhookLogger.error(
+        { err, txHash: event.txHash },
+        "webhook dispatch failed",
+      );
+    })
+    .finally(() => {
+      activeDispatches -= 1;
+      resolveDeliveryQueueIdle();
+    });
+}
+
 // ── Dispatch ──────────────────────────────────────────────────────────────────
 
 /**
@@ -115,11 +208,9 @@ export interface DeliveryOutcome {
  * attempted at all — and the per-webhook `enabled` filter in the include
  * below, which applies underneath that switch rather than instead of it.
  *
- * Failures are logged but never thrown — the indexer must not crash on
- * a bad webhook endpoint. A failed delivery also raises a (rate-limited)
- * WEBHOOK_FAILED notification — see notifyWebhookFailure — so a receiver
- * that has been down for a while doesn't go unnoticed until someone thinks
- * to check the delivery history.
+ * Endpoint failures become failed outcomes, and each failed delivery raises
+ * a (rate-limited) WEBHOOK_FAILED notification. Unexpected dispatch errors
+ * are logged by enqueueWebhookDispatch.
  */
 export async function dispatchWebhooks(event: TipEvent): Promise<void> {
   const creator = await db.creator.findUnique({
@@ -148,9 +239,24 @@ export async function dispatchWebhooks(event: TipEvent): Promise<void> {
 
   const body = JSON.stringify(payload);
 
-  await Promise.allSettled(
+  await Promise.all(
     creator.webhooks.map(async (webhook) => {
-      const outcome = await deliver(webhook, body, payload);
+      let outcome: DeliveryOutcome;
+      try {
+        outcome = await queueDelivery(webhook, body, payload);
+      } catch (err) {
+        webhookLogger.error(
+          { err, webhookId: webhook.id },
+          "webhook delivery failed unexpectedly",
+        );
+        outcome = {
+          success: false,
+          statusCode: null,
+          response: null,
+          attemptedAt: new Date(),
+        };
+      }
+
       if (!outcome.success) {
         await notifyWebhookFailure(creator.id, {
           webhookId: webhook.id,
@@ -165,10 +271,8 @@ export async function dispatchWebhooks(event: TipEvent): Promise<void> {
 /**
  * POST one signed body to one webhook and record the attempt.
  *
- * Never throws: a bad endpoint must not take down the indexer, and the ping
- * route wants the failure as data rather than as an exception. The outcome is
- * returned so the caller can report it — the indexer discards it, the ping
- * route hands it back to the creator.
+ * Endpoint and delivery-row write failures are returned as failed outcomes.
+ * Unexpected errors may still propagate to callers.
  */
 async function deliver(
   webhook: { id: string; url: string; secret: string },
@@ -181,6 +285,7 @@ async function deliver(
   let statusCode: number | undefined;
   let responseText: string | undefined;
   let success = false;
+  let timer: NodeJS.Timeout | undefined;
 
   try {
     await assertWebhookDestinationAllowed(webhook.url);
@@ -190,7 +295,7 @@ async function deliver(
     );
     const signature = sign(body, secret, timestamp);
     const controller = new AbortController();
-    const timer = setTimeout(
+    timer = setTimeout(
       () => controller.abort(),
       config.webhooks.timeoutMs,
     );
@@ -211,51 +316,152 @@ async function deliver(
       body,
       signal: controller.signal,
       redirect: "manual",
-    }).finally(() => clearTimeout(timer));
+    });
 
     statusCode = res.status;
-    responseText = (await res.text()).slice(0, config.webhooks.maxBodySize);
+    responseText = await readResponseBody(
+      res,
+      config.webhooks.maxBodySize,
+      controller.signal,
+    );
     success = res.ok;
   } catch (err) {
-    responseText = String(err).slice(0, config.webhooks.maxBodySize);
+    responseText = truncateUtf8(String(err), config.webhooks.maxBodySize);
     success = false;
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
   }
 
-  // Record metrics
-  const durationSeconds = (Date.now() - startTime) / 1000;
-  recordWebhookDuration(durationSeconds);
-  recordWebhookDelivery(success ? 'success' : 'failure');
-
   // Record delivery attempt
-  const attempt = await db.webhookDelivery.create({
-    // statusCode and response are nullable columns: a request that timed out or
-    // failed to connect genuinely has neither, and NULL records that honestly.
-    // An explicit undefined is also rejected under exactOptionalPropertyTypes.
-    data: {
-      webhookId: webhook.id,
-      statusCode: statusCode ?? null,
-      success,
-      payload: boundPayload(payload, config.webhooks.maxPayloadSize),
-      response: responseText ?? null,
-    },
-    select: {
-      statusCode: true,
-      success: true,
-      response: true,
-      attemptedAt: true,
-    },
-  });
+  let attempt: DeliveryOutcome | undefined;
+  try {
+    attempt = await db.webhookDelivery.create({
+      // statusCode and response are nullable columns: a request that timed out or
+      // failed to connect genuinely has neither, and NULL records that honestly.
+      // An explicit undefined is also rejected under exactOptionalPropertyTypes.
+      data: {
+        webhookId: webhook.id,
+        statusCode: statusCode ?? null,
+        success,
+        payload: boundPayload(payload, config.webhooks.maxPayloadSize),
+        response: responseText ?? null,
+      },
+      select: {
+        statusCode: true,
+        success: true,
+        response: true,
+        attemptedAt: true,
+      },
+    });
+  } catch (err) {
+    success = false;
+    webhookLogger.error(
+      { err, webhookId: webhook.id },
+      "failed to record webhook delivery",
+    );
+  }
+
+  recordWebhookDuration((Date.now() - startTime) / 1000);
+  recordWebhookDelivery(success ? "success" : "failure");
 
   if (!success) {
     webhookLogger.warn(
-      { url: webhook.url, statusCode: statusCode ?? null },
+      {
+        webhookId: webhook.id,
+        url: webhook.url,
+        statusCode: statusCode ?? null,
+      },
       "delivery failed",
     );
+  }
+
+  if (attempt === undefined) {
+    return {
+      statusCode: statusCode ?? null,
+      success: false,
+      response: responseText ?? null,
+      attemptedAt: new Date(startTime),
+    };
   }
 
   // Reported straight from the stored row, so what the creator is told and
   // what the delivery history will show them cannot drift apart.
   return attempt;
+}
+
+async function readResponseBody(
+  response: Response,
+  maxBytes: number,
+  signal: AbortSignal,
+): Promise<string> {
+  const responseBody = (
+    response as { body?: ReadableStream<Uint8Array> | null }
+  ).body;
+  if (responseBody === undefined) {
+    const text = await response.text();
+    return truncateUtf8(text, maxBytes);
+  }
+
+  const reader = responseBody?.getReader();
+  if (reader === undefined) return "";
+
+  const chunks: Uint8Array[] = [];
+  let bytesRead = 0;
+  let truncated = false;
+  let abortHandler: (() => void) | undefined;
+  const aborted = new Promise<never>((_resolve, reject) => {
+    abortHandler = () => {
+      void reader.cancel(signal.reason).catch((err: unknown) => {
+        webhookLogger.warn({ err }, "failed to cancel webhook response body");
+      });
+      reject(signal.reason);
+    };
+    if (signal.aborted) abortHandler();
+    else signal.addEventListener("abort", abortHandler, { once: true });
+  });
+
+  try {
+    if (maxBytes <= 0) {
+      truncated = true;
+    } else {
+      while (bytesRead < maxBytes) {
+        const { done, value } = await Promise.race([reader.read(), aborted]);
+        if (done) break;
+
+        const remaining = maxBytes - bytesRead;
+        const chunk = value.subarray(0, remaining);
+        chunks.push(chunk);
+        bytesRead += chunk.byteLength;
+
+        if (value.byteLength > remaining || bytesRead === maxBytes) {
+          truncated = true;
+          break;
+        }
+      }
+    }
+  } finally {
+    if (abortHandler !== undefined) {
+      signal.removeEventListener("abort", abortHandler);
+    }
+    if (truncated) {
+      void reader.cancel().catch((err: unknown) => {
+        webhookLogger.warn({ err }, "failed to cancel webhook response body");
+      });
+    }
+  }
+
+  const decoded = new TextDecoder().decode(Buffer.concat(chunks, bytesRead), {
+    stream: truncated,
+  });
+  return truncateUtf8(decoded, maxBytes);
+}
+
+function truncateUtf8(value: string, maxBytes: number): string {
+  const encoded = Buffer.from(value, "utf8");
+  const truncated = encoded.byteLength > maxBytes;
+  return new TextDecoder().decode(encoded.subarray(0, maxBytes), {
+    stream: truncated,
+  });
 }
 
 /**
@@ -310,7 +516,7 @@ export async function sendTestPing(
     timestamp: new Date().toISOString(),
   };
 
-  return deliver(webhook, JSON.stringify(payload), payload);
+  return queueDelivery(webhook, JSON.stringify(payload), payload);
 }
 
 // ── CRUD (creator manages their own webhooks) ─────────────────────────────────

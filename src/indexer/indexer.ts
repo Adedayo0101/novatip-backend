@@ -35,7 +35,7 @@ import { fetchLatestLedger } from "./rpc.js";
 import { calculatePollBackoff } from "./backoff.js";
 import { logger } from "../utils/logger.js";
 import { persistTip, updateCursor, readCursor } from "./persist.js";
-import { dispatchWebhooks } from "../modules/webhooks/webhooks.service.js";
+import { enqueueWebhookDispatch } from "../modules/webhooks/webhooks.service.js";
 import { sendTipNotification } from "../modules/notifications/email.service.js";
 import {
   recordPollError,
@@ -279,11 +279,7 @@ async function handleEvent(event: TipEvent): Promise<void> {
   const isNew = await persistTip(event, txHash);
 
   if (isNew) {
-    try {
-      await dispatchWebhooks(event);
-    } catch (err) {
-      indexerLogger.warn({ err, txHash }, "webhook dispatch failed");
-    }
+    enqueueWebhookDispatch(event);
 
     try {
       await sendTipNotification(event);

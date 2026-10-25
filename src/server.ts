@@ -15,6 +15,7 @@ import jwt from "@fastify/jwt";
 import rateLimit from "@fastify/rate-limit";
 import { config } from "./config.js";
 import { disconnectDb } from "./db.js";
+import { drainWebhookDeliveries } from "./modules/webhooks/webhooks.service.js";
 import { disconnectRedis, redis } from "./redis.js";
 import { authenticate } from "./modules/auth/authenticate.js";
 import { buildLoggerOptions } from "./utils/logger.js";
@@ -165,6 +166,7 @@ export async function buildServer(
 
   // ── Graceful shutdown ─────────────────────────────────────────────────────
   server.addHook("onClose", async () => {
+    await drainWebhookDeliveries();
     await Promise.all([disconnectDb(), disconnectRedis()]);
   });
 
