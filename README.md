@@ -6,7 +6,7 @@ Node.js + Fastify backend for Novatip.
 
 Runtime: Node.js 20, Framework: Fastify 4, Language: TypeScript 5
 Database: PostgreSQL 16 + Prisma ORM
-Cache: Redis 7 + IORedis
+Cache: Redis 7 + IORedis (Redis 6.2+ required for atomic `GETDEL` nonce consumption)
 Auth: Sign-In With Stellar (SIWS) + JWT
 Email: Resend, QR: qrcode, Events: @novatip/sdk
 
