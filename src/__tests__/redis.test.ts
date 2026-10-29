@@ -22,6 +22,11 @@ let delError: Error | null = null;
 const loggerWarnMock = jest.fn();
 
 const mockClient = {
+  getdel: async (key: string): Promise<string | null> => {
+    const value = store.get(key) ?? null;
+    store.delete(key);
+    return value;
+  },
   get: async (key: string): Promise<string | null> => {
     if (getError) throw getError;
     return store.get(key) ?? null;
@@ -57,7 +62,28 @@ jest.unstable_mockModule("../utils/logger.js", () => ({
   },
 }));
 
-const { cacheGet, cacheSet, cacheInvalidate } = await import("../redis.js");
+const { cacheGet, cacheSet, cacheInvalidate, consumeAuthNonce, setAuthNonce } =
+  await import("../redis.js");
+
+describe("consumeAuthNonce", () => {
+  beforeEach(() => {
+    store.clear();
+  });
+
+  it("atomically gives the nonce to only one concurrent caller", async () => {
+    const walletAddress = "GTEST";
+    const nonce = "single-use-nonce";
+    await setAuthNonce(walletAddress, nonce);
+
+    const results = await Promise.all([
+      consumeAuthNonce(walletAddress),
+      consumeAuthNonce(walletAddress),
+    ]);
+
+    expect(results.filter((result) => result === nonce)).toHaveLength(1);
+    expect(results.filter((result) => result === null)).toHaveLength(1);
+  });
+});
 
 describe("cacheGet", () => {
   const testKey = "test-corrupt-entry";

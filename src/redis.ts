@@ -57,16 +57,13 @@ export async function setAuthNonce(
 }
 
 /**
- * Retrieve and immediately delete a stored auth nonce (single-use).
+ * Atomically retrieve and delete a stored auth nonce (single-use).
  * Returns null if the nonce has expired or was never set.
  */
 export async function consumeAuthNonce(
   walletAddress: string,
 ): Promise<string | null> {
-  const key = `nonce:${walletAddress}`;
-  const nonce = await redis.get(key);
-  if (nonce) await redis.del(key);
-  return nonce;
+  return redis.getdel(`nonce:${walletAddress}`);
 }
 
 /**
