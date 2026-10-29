@@ -840,9 +840,11 @@ export const openApiSpecification = {
       },
       Split: {
         type: "object",
+        description:
+          "The recipient must be a valid Stellar account address. Basis points are from 1 to 10000.",
         properties: {
-          to: { type: "string" },
-          bps: { type: "integer" },
+          to: { type: "string", pattern: "^G[A-Z2-7]{55}$" },
+          bps: { type: "integer", minimum: 1, maximum: 10_000 },
         },
         required: ["to", "bps"],
       },
@@ -855,7 +857,12 @@ export const openApiSpecification = {
           bio: { type: "string", nullable: true },
           avatarUrl: { type: "string", nullable: true },
           jarId: { type: "string" },
-          splits: { type: "array", items: schema("Split") },
+          splits: {
+            type: "array",
+            description:
+              "Recipients must be unique, and total basis points must not exceed 10000.",
+            items: schema("Split"),
+          },
           createdAt: { type: "string", format: "date-time" },
         },
         required: [
@@ -964,6 +971,8 @@ export const openApiSpecification = {
           splits: {
             type: "array",
             minItems: 1,
+            description:
+              "Recipients must be unique, and total basis points must not exceed 10000.",
             items: schema("Split"),
           },
         },

@@ -19,6 +19,11 @@ const store = new Map<string, string>();
 
 const mockRedis = {
   get: async (key: string): Promise<string | null> => store.get(key) ?? null,
+  getdel: async (key: string): Promise<string | null> => {
+    const value = store.get(key) ?? null;
+    store.delete(key);
+    return value;
+  },
   set: async (key: string, value: string): Promise<"OK"> => {
     store.set(key, value);
     return "OK";
