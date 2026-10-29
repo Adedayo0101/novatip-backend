@@ -26,11 +26,8 @@ import {
 import { config } from "../../config.js";
 import { db } from "../../db.js";
 import { sendEmailVerificationEmail } from "../notifications/email.service.js";
-import {
-  creatorEmail,
-  httpsUrl,
-  validateSlugParam,
-} from "../../utils/validation.js";
+import { creatorEmail, validateSlugParam } from "../../utils/validation.js";
+import { CreatorSplitsSchema } from "./creator-splits.schema.js";
 
 const RenameSlugBody = z.object({
   slug: z.string().min(3).max(32),
@@ -44,9 +41,7 @@ const ClaimBody = z.object({
   jarId: z.string().min(1).optional(),
   displayName: z.string().max(80).optional(),
   bio: z.string().max(300).optional(),
-  splits: z
-    .array(z.object({ to: z.string(), bps: z.number().int() }))
-    .optional(),
+  splits: CreatorSplitsSchema.optional(),
 });
 
 const UpdateProfileBody = z.object({
@@ -60,7 +55,9 @@ const UpdateProfileBody = z.object({
 });
 
 const UpdateSplitsBody = z.object({
-  splits: z.array(z.object({ to: z.string(), bps: z.number().int() })).min(1),
+  splits: CreatorSplitsSchema.refine((splits) => splits.length > 0, {
+    message: "At least one split is required.",
+  }),
 });
 
 const MessageVisibilityBody = z.object({
