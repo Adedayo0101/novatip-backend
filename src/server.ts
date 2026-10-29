@@ -148,11 +148,15 @@ export async function buildServer(
 
   // ── Global error handler ──────────────────────────────────────────────────
   server.setErrorHandler((error, request, reply) => {
-    server.log.error({ err: error, url: request.url }, "Unhandled error");
-
     const statusCode = error.statusCode ?? 500;
     const isServerError = statusCode >= 500;
-    
+
+    if (isServerError) {
+      server.log.error({ err: error, url: request.url }, "Server error");
+    } else {
+      server.log.warn({ err: error, url: request.url }, "Client error");
+    }
+
     reply.status(statusCode).send({
       error: {
         code: isProduction && isServerError ? "INTERNAL_SERVER_ERROR" : (error.code ?? "INTERNAL_SERVER_ERROR"),
